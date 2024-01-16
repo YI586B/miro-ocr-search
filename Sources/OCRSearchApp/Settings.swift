@@ -37,6 +37,38 @@ enum HL {
     }
 }
 
+private extension Font.Design {
+    var nsDesign: NSFontDescriptor.SystemDesign {
+        switch self { case .rounded: return .rounded; case .serif: return .serif
+        case .monospaced: return .monospaced; default: return .default }
+    }
+}
+
+private func nsFont(size: CGFloat, weight: Font.Weight, design: Font.Design) -> NSFont {
+    let nsWeight: NSFont.Weight = { switch weight { case .medium: return .medium
+        case .bold: return .bold; default: return .regular } }()
+    let base = NSFont.systemFont(ofSize: size, weight: nsWeight)
+    guard let d = base.fontDescriptor.withDesign(design.nsDesign), let f = NSFont(descriptor: d, size: size)
+    else { return base }
+    return f
+}
+
+/// Largest font size at which `text` (in the given weight/design) fits inside `box`, measured
+/// with real glyph metrics rather than guessed from the box's height alone. A height-only guess
+/// routinely overflows for long words and gets rescued by SwiftUI's auto-shrink, which makes
+/// redrawn words come out inconsistent sizes from match to match; measuring directly avoids that.
+func fittedFontSize(for text: String, weight: Font.Weight, design: Font.Design, fitting box: CGSize) -> CGFloat {
+    guard !text.isEmpty, box.width > 1, box.height > 1 else { return 4 }
+    func fits(_ size: CGFloat) -> Bool {
+        let measured = (text as NSString).size(withAttributes: [.font: nsFont(size: size, weight: weight, design: design)])
+        return measured.width <= box.width && measured.height <= box.height
+    }
+    var lo: CGFloat = 1, hi: CGFloat = box.height * 1.4
+    guard fits(lo) else { return lo }
+    for _ in 0..<12 { let mid = (lo + hi) / 2; if fits(mid) { lo = mid } else { hi = mid } }
+    return max(lo, 4)
+}
+
 /// One highlighted match: either a bounding box, or the matched text drawn to fit the box
 /// (font color only, no box).
 struct MatchView: View {
@@ -50,11 +82,11 @@ struct MatchView: View {
     var body: some View {
         Group {
             if mode == "text" {
+                let w = HL.fontWeight(weight), d = HL.fontDesign(design)
                 Text(text)
-                    .font(.system(size: max(size.height * 0.8, 4), weight: HL.fontWeight(weight),
-                                  design: HL.fontDesign(design)))
+                    .font(.system(size: fittedFontSize(for: text, weight: w, design: d, fitting: size), weight: w, design: d))
                     .foregroundStyle(textColor)
-                    .lineLimit(1).minimumScaleFactor(0.3)
+                    .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
                     .frame(width: size.width, height: size.height)
             } else {
                 Rectangle().fill(box.opacity(opacity))
