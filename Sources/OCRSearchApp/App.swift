@@ -29,6 +29,39 @@ struct PreviewRequest: Codable, Hashable {
     let query: String
 }
 
+/// Approximate the image's background color right around each match box, so text-overlay mode
+/// can paint the redrawn word over a same-colored patch instead of just floating on top of the
+/// original characters. Samples the four corners of each box, inset a little inward — for
+/// ordinary text those corners are rarely covered by a glyph stroke — and averages them; falls
+/// back to `nil` (caller uses its own default) if the image can't be read as a bitmap.
+func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return Array(repeating: nil, count: rects.count) }
+    let rep = NSBitmapImageRep(cgImage: cg)
+    let w = rep.pixelsWide, h = rep.pixelsHigh
+    guard w > 0, h > 0 else { return Array(repeating: nil, count: rects.count) }
+    func sample(_ rect: CGRect) -> Color? {
+        // Vision rects are normalised with origin bottom-left; bitmap pixel rows run top-down.
+        let x0 = rect.minX, x1 = rect.maxX
+        let yTop = 1 - rect.maxY, yBottom = 1 - rect.minY
+        let insetX = (x1 - x0) * 0.1, insetY = (yBottom - yTop) * 0.1
+        let corners: [(CGFloat, CGFloat)] = [
+            (x0 + insetX, yTop + insetY), (x1 - insetX, yTop + insetY),
+            (x0 + insetX, yBottom - insetY), (x1 - insetX, yBottom - insetY)
+        ]
+        var r = 0.0, g = 0.0, b = 0.0, n = 0.0
+        for (nx, ny) in corners {
+            let px = min(max(Int(nx * CGFloat(w)), 0), w - 1)
+            let py = min(max(Int(ny * CGFloat(h)), 0), h - 1)
+            guard let c = rep.colorAt(x: px, y: py)?.usingColorSpace(.sRGB) else { continue }
+            r += c.redComponent; g += c.greenComponent; b += c.blueComponent; n += 1
+        }
+        guard n > 0 else { return nil }
+        return Color(.sRGB, red: r / n, green: g / n, blue: b / n, opacity: 1)
+    }
+    return rects.map(sample)
+}
+
 /// FTS5 query -> plain words to look for on the image (drops quotes, operators, wildcards).
 func searchTerms(_ q: String) -> [String] {
     let skip: Set<String> = ["AND", "OR", "NOT", "NEAR"]
@@ -71,6 +104,7 @@ struct PreviewView: View {
     let query: String
     @State private var image: NSImage?
     @State private var matches: [TextMatch] = []
+    @State private var bgColors: [Color?] = []
     @State private var scanning = false
     @State private var failed = false
     @AppStorage(HL.show) private var show = true
@@ -79,24 +113,27 @@ struct PreviewView: View {
     @AppStorage(HL.opacity) private var opacity = 0.35
     @AppStorage(HL.outline) private var outline = true
     @AppStorage(HL.textHex) private var textHex = HL.defaultText
+    @AppStorage(HL.bgHex) private var bgHex = HL.defaultBg
     @AppStorage(HL.design) private var design = "default"
     @AppStorage(HL.weight) private var weight = "regular"
 
     var body: some View {
         let box = Color(hex: boxHex) ?? .yellow
         let txt = Color(hex: textHex) ?? .black
+        let bg = Color(hex: bgHex) ?? .white
         let boxBinding = Binding<Color>(get: { box }, set: { boxHex = $0.hexString })
         let txtBinding = Binding<Color>(get: { txt }, set: { textHex = $0.hexString })
         Group {
             if let image {
                 Image(nsImage: image).resizable().scaledToFit()
                     .overlay(GeometryReader { geo in
-                        ForEach(Array((show ? matches : []).enumerated()), id: \.offset) { _, m in
+                        ForEach(Array((show ? matches : []).enumerated()), id: \.offset) { i, m in
                             let w = m.rect.width * geo.size.width + 4
                             let h = m.rect.height * geo.size.height + 4
                             MatchView(text: m.text, size: CGSize(width: w, height: h), mode: mode,
                                       box: box, textColor: txt, opacity: opacity, outline: outline,
-                                      design: design, weight: weight)
+                                      design: design, weight: weight,
+                                      sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: bg)
                                 .position(x: m.rect.midX * geo.size.width,
                                           y: (1 - m.rect.midY) * geo.size.height)
                         }
@@ -117,7 +154,11 @@ struct PreviewView: View {
             Picker("Show as", selection: $mode) {
                 Text("Boxes").tag("box"); Text("Text").tag("text")
             }.pickerStyle(.segmented).disabled(!show)
-            if mode == "text" { ColorPicker("Font", selection: txtBinding, supportsOpacity: false) }
+            if mode == "text" {
+                ColorPicker("Font", selection: txtBinding, supportsOpacity: false)
+                ColorPicker("Background", selection: Binding<Color>(get: { bg }, set: { bgHex = $0.hexString }),
+                             supportsOpacity: false).help("Used where the image's own background can't be sampled")
+            }
             else { ColorPicker("Box", selection: boxBinding, supportsOpacity: false) }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -128,12 +169,17 @@ struct PreviewView: View {
         .task(id: path) {
             image = NSImage(contentsOfFile: path)
             failed = image == nil
+            bgColors = []
             let terms = searchTerms(query)
             guard image != nil, !terms.isEmpty else { return }
             scanning = true
             let p = path
             matches = await Task.detached(priority: .userInitiated) {
                 (try? findMatches(at: URL(fileURLWithPath: p), terms: terms)) ?? []
+            }.value
+            let rects = matches.map(\.rect)
+            bgColors = await Task.detached(priority: .userInitiated) {
+                sampledBackgroundColors(at: p, rects: rects)
             }.value
             scanning = false
         }

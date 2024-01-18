@@ -23,10 +23,12 @@ enum HL {
     static let opacity = "highlightOpacity"
     static let outline = "highlightOutline"
     static let textHex = "highlightTextHex"
+    static let bgHex = "highlightBgHex"          // text-mode background, when the image can't be sampled
     static let design = "highlightFontDesign"    // default | rounded | serif | monospaced
     static let weight = "highlightFontWeight"    // regular | medium | bold
     static let defaultBox = "#FFD60A"
     static let defaultText = "#000000"
+    static let defaultBg = "#FFFFFF"
 
     static func fontDesign(_ s: String) -> Font.Design {
         switch s { case "rounded": return .rounded; case "serif": return .serif
@@ -70,7 +72,7 @@ func fittedFontSize(for text: String, weight: Font.Weight, design: Font.Design, 
 }
 
 /// One highlighted match: either a bounding box, or the matched text drawn to fit the box
-/// (font color only, no box).
+/// (font color, over a background patch matching the image so it covers the original text).
 struct MatchView: View {
     let text: String
     let size: CGSize
@@ -78,16 +80,23 @@ struct MatchView: View {
     let box: Color, textColor: Color
     let opacity: Double, outline: Bool
     let design: String, weight: String
+    /// Color sampled from the image right around this match, if sampling succeeded; falls back
+    /// to `background` (the user-picked color) when it didn't, e.g. no image loaded yet.
+    var sampled: Color? = nil
+    var background: Color = .white
 
     var body: some View {
         Group {
             if mode == "text" {
                 let w = HL.fontWeight(weight), d = HL.fontDesign(design)
-                Text(text)
-                    .font(.system(size: fittedFontSize(for: text, weight: w, design: d, fitting: size), weight: w, design: d))
-                    .foregroundStyle(textColor)
-                    .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
-                    .frame(width: size.width, height: size.height)
+                ZStack {
+                    Rectangle().fill(sampled ?? background)
+                    Text(text)
+                        .font(.system(size: fittedFontSize(for: text, weight: w, design: d, fitting: size), weight: w, design: d))
+                        .foregroundStyle(textColor)
+                        .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
+                }
+                .frame(width: size.width, height: size.height)
             } else {
                 Rectangle().fill(box.opacity(opacity))
                     .overlay(Rectangle().stroke(box, lineWidth: outline ? 2 : 0))
@@ -104,12 +113,14 @@ struct SettingsView: View {
     @AppStorage(HL.opacity) private var opacity = 0.35
     @AppStorage(HL.outline) private var outline = true
     @AppStorage(HL.textHex) private var textHex = HL.defaultText
+    @AppStorage(HL.bgHex) private var bgHex = HL.defaultBg
     @AppStorage(HL.design) private var design = "default"
     @AppStorage(HL.weight) private var weight = "regular"
 
     var body: some View {
         let box = Binding<Color>(get: { Color(hex: boxHex) ?? .yellow }, set: { boxHex = $0.hexString })
         let txt = Binding<Color>(get: { Color(hex: textHex) ?? .black }, set: { textHex = $0.hexString })
+        let bg = Binding<Color>(get: { Color(hex: bgHex) ?? .white }, set: { bgHex = $0.hexString })
         Form {
             Toggle("Show overlay on image", isOn: $show)
             Picker("Show matches as", selection: $mode) {
@@ -128,7 +139,10 @@ struct SettingsView: View {
             }.disabled(mode == "text")
 
             Section("Text overlay") {
-                ColorPicker("Font color", selection: txt, supportsOpacity: false)
+                HStack {
+                    ColorPicker("Font color", selection: txt, supportsOpacity: false)
+                    ColorPicker("Background", selection: bg, supportsOpacity: false)
+                }
                 Picker("Font", selection: $design) {
                     Text("System").tag("default"); Text("Rounded").tag("rounded")
                     Text("Serif").tag("serif"); Text("Monospaced").tag("monospaced")
@@ -136,7 +150,7 @@ struct SettingsView: View {
                 Picker("Weight", selection: $weight) {
                     Text("Regular").tag("regular"); Text("Medium").tag("medium"); Text("Bold").tag("bold")
                 }
-                Text("Matched words are re-drawn in this font and color, sized to fit the original text's box. No box is drawn in this mode.")
+                Text("Matched words are re-drawn in this font and color, over a background patch sampled from the image around them (so they cover the original text) — or the Background color above when sampling isn't possible.")
                     .font(.caption).foregroundStyle(.secondary)
             }.disabled(mode == "box")
 
@@ -146,14 +160,14 @@ struct SettingsView: View {
                     Text("Screen Active 7h 31m").font(.title3).foregroundStyle(.secondary)
                     MatchView(text: "Screen Active", size: CGSize(width: 150, height: 26), mode: mode,
                               box: box.wrappedValue, textColor: txt.wrappedValue, opacity: opacity,
-                              outline: outline, design: design, weight: weight)
+                              outline: outline, design: design, weight: weight, background: bg.wrappedValue)
                         .offset(x: -50)
                 }.frame(height: 50)
             }
 
             Button("Reset") {
                 show = true; mode = "box"; boxHex = HL.defaultBox; opacity = 0.35; outline = true
-                textHex = HL.defaultText; design = "default"; weight = "regular"
+                textHex = HL.defaultText; bgHex = HL.defaultBg; design = "default"; weight = "regular"
             }
         }
         .padding(20).frame(width: 460)
