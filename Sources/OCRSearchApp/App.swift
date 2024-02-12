@@ -18,7 +18,7 @@ struct OCRSearchApp: App {
         WindowGroup("OCR Image Search") { ContentView().frame(minWidth: 760, minHeight: 520) }
         // Full-size viewer: one window per image, closable with the red button, Cmd+W or Esc.
         WindowGroup("Preview", id: "preview", for: PreviewRequest.self) { $req in
-            if let req { PreviewView(path: req.path, query: req.query) }
+            if let req { PreviewView(path: req.path, query: req.query, searchMode: req.mode) }
         }.defaultSize(width: 620, height: 900)
         Settings { SettingsView() }
     }
@@ -27,6 +27,7 @@ struct OCRSearchApp: App {
 struct PreviewRequest: Codable, Hashable {
     let path: String
     let query: String
+    var mode: SearchMode = .phrase
 }
 
 /// Approximate the image's background color right around each match box, so text-overlay mode
@@ -62,8 +63,14 @@ func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
     return rects.map(sample)
 }
 
-/// FTS5 query -> plain words to look for on the image (drops quotes, operators, wildcards).
-func searchTerms(_ q: String) -> [String] {
+/// Query -> the term(s) to look for on the image (drops quotes, operators, wildcards). In
+/// `.phrase` mode the whole query is kept together as one term, so only that contiguous phrase
+/// gets highlighted; in `.words` mode each word is highlighted separately, wherever it appears.
+func searchTerms(_ q: String, mode: SearchMode) -> [String] {
+    if mode == .phrase {
+        let t = q.trimmingCharacters(in: CharacterSet(charactersIn: " \t\n\"()*^+-"))
+        return t.isEmpty ? [] : [t]
+    }
     let skip: Set<String> = ["AND", "OR", "NOT", "NEAR"]
     return q.components(separatedBy: CharacterSet(charactersIn: " \t\n\"()"))
         .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "*^+-")) }
@@ -102,6 +109,7 @@ struct Thumb: View {
 struct PreviewView: View {
     let path: String
     let query: String
+    let searchMode: SearchMode
     @State private var image: NSImage?
     @State private var matches: [TextMatch] = []
     @State private var bgColors: [Color?] = []
@@ -146,7 +154,7 @@ struct PreviewView: View {
         .frame(minWidth: 400, minHeight: 400)
         .navigationTitle((path as NSString).lastPathComponent)
         .toolbar {
-            Text(scanning ? "Finding matches…" : (searchTerms(query).isEmpty ? "" : (show ? "\(matches.count) match(es)" : "overlay off")))
+            Text(scanning ? "Finding matches…" : (searchTerms(query, mode: searchMode).isEmpty ? "" : (show ? "\(matches.count) match(es)" : "overlay off")))
                 .foregroundStyle(.secondary)
             Toggle("Overlay", isOn: $show)
                 .toggleStyle(.switch).help("Show or hide the overlay (Cmd+Shift+O)")
@@ -170,7 +178,7 @@ struct PreviewView: View {
             image = NSImage(contentsOfFile: path)
             failed = image == nil
             bgColors = []
-            let terms = searchTerms(query)
+            let terms = searchTerms(query, mode: searchMode)
             guard image != nil, !terms.isEmpty else { return }
             scanning = true
             let p = path
@@ -196,6 +204,13 @@ struct ContentView: View {
             HStack {
                 TextField("Search text inside images (FTS5: foo AND \"exact phrase\" bar*)", text: $m.query)
                     .textFieldStyle(.roundedBorder).onSubmit { m.search() }
+                Picker("", selection: $m.searchMode) {
+                    Text("Phrase").tag(SearchMode.phrase)
+                    Text("Any word").tag(SearchMode.words)
+                }
+                .pickerStyle(.segmented).frame(width: 150)
+                .help("Phrase: match the whole search text together, in order. Any word: match each word separately, anywhere.")
+                .onChange(of: m.searchMode) { _ in m.search() }
                 Button("Index folder…") { pick(dir: true) { m.index(folder: $0[0]) } }
                 Button("Add files…") { pick(dir: false) { m.add(files: $0) } }
                 Button { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) } label: {
@@ -214,11 +229,11 @@ struct ContentView: View {
                             .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
                     }
                     Spacer()
-                    Button { openWindow(id: "preview", value: PreviewRequest(path: hit.path, query: m.query)) } label: { Image(systemName: "eye") }
+                    Button { openWindow(id: "preview", value: PreviewRequest(path: hit.path, query: m.query, mode: m.searchMode)) } label: { Image(systemName: "eye") }
                         .buttonStyle(.borderless).help("View full size")
                 }
                 .contentShape(Rectangle())
-                .onTapGesture(count: 2) { openWindow(id: "preview", value: PreviewRequest(path: hit.path, query: m.query)) }
+                .onTapGesture(count: 2) { openWindow(id: "preview", value: PreviewRequest(path: hit.path, query: m.query, mode: m.searchMode)) }
                 .tag(hit.id)
             }
             Divider()

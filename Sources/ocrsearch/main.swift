@@ -5,8 +5,12 @@ func usage() -> Never {
     print("""
     usage:
       ocrsearch index <folder>       OCR new/changed images and add them to the index
-      ocrsearch search <query>       full-text search (FTS5: foo AND "exact phrase" bar*)
-      ocrsearch export [query] [--files a.png b.png ...] [--board ID | --name "Board name"] [--limit N]
+      ocrsearch search <query> [--words]
+                                     full-text search; a multi-word query matches as one exact
+                                     phrase by default, or pass --words to match each word
+                                     separately, anywhere (also accepts FTS5 syntax directly:
+                                     foo AND "exact phrase" bar*)
+      ocrsearch export [query] [--words] [--files a.png b.png ...] [--board ID | --name "Board name"] [--limit N]
                                      send search hits and/or chosen files to a Miro board
                                      (needs MIRO_TOKEN; creates a new board unless --board is given)
     """)
@@ -24,19 +28,24 @@ do {
         let (done, skipped, failed) = indexFolder(root, db: db)
         print("done: \(done) indexed, \(skipped) unchanged, \(failed) failed")
     case "search":
-        let q = args.dropFirst(2).joined(separator: " ")
-        let hits = try db.search(q)
+        var words = false
+        var qwords: [String] = []
+        for a in args.dropFirst(2) { if a == "--words" { words = true } else { qwords.append(a) } }
+        let q = qwords.joined(separator: " ")
+        let hits = try db.search(ftsQuery(q, mode: words ? .words : .phrase))
         if hits.isEmpty { print("no matches") }
         for h in hits { print("\(h.path)\n    \(h.snippet)") }
     case "export":
         var query: [String] = [], files: [String] = []
         var board: String?, name = "OCR search \(ISO8601DateFormatter().string(from: Date()).prefix(10))"
         var limit = 20
+        var words = false
         var mode = "q"
         var it = args.dropFirst(2).makeIterator()
         while let a = it.next() {
             switch a {
             case "--files": mode = "f"
+            case "--words": words = true
             case "--board": board = it.next()
             case "--name": name = it.next() ?? name
             case "--limit": limit = Int(it.next() ?? "") ?? limit
@@ -44,7 +53,7 @@ do {
             }
         }
         var items: [(path: String, snippet: String)] = []
-        if !query.isEmpty { items += try db.search(query.joined(separator: " "), limit: limit) }
+        if !query.isEmpty { items += try db.search(ftsQuery(query.joined(separator: " "), mode: words ? .words : .phrase), limit: limit) }
         for f in files where !items.contains(where: { $0.path == f }) {
             items.append((f, ""))       // explicitly chosen files: image only, no snippet
         }

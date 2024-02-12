@@ -3,6 +3,27 @@ import SQLite3
 
 private let TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
+/// Whether a multi-word query should match as one contiguous phrase, or as separate words that
+/// can appear anywhere (and in any order) in the text.
+public enum SearchMode: String, CaseIterable, Sendable, Codable { case phrase, words }
+
+/// Turn a plain, unquoted query into an FTS5 MATCH expression for the given mode. A query that
+/// already uses explicit FTS5 syntax (quotes, AND/OR/NOT/NEAR, parentheses, a `*` wildcard) is
+/// passed through untouched in either mode, so that still works for anyone who types it.
+/// Otherwise `.phrase` wraps the whole query in quotes so "screen active" only matches that
+/// exact phrase, while `.words` leaves it as FTS5's default implicit AND of separate words.
+public func ftsQuery(_ raw: String, mode: SearchMode) -> String {
+    let q = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard mode == .phrase, !looksLikeAdvancedFTS(q) else { return q }
+    return "\"\(q.replacingOccurrences(of: "\"", with: "\"\""))\""
+}
+
+private func looksLikeAdvancedFTS(_ q: String) -> Bool {
+    if q.contains("\"") || q.contains("(") || q.contains(")") || q.contains("*") { return true }
+    let upper = q.uppercased()
+    return ["AND", "OR", "NOT", "NEAR"].contains { upper.range(of: "\\b\($0)\\b", options: .regularExpression) != nil }
+}
+
 /// SQLite + FTS5 store: `files` tracks what was indexed, `fts` holds searchable text.
 public final class Database {
     private var db: OpaquePointer?

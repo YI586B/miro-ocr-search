@@ -12,6 +12,9 @@ struct Hit: Identifiable, Hashable {
 @MainActor
 final class Model: ObservableObject {
     @Published var query = ""
+    @Published var searchMode: SearchMode = SearchMode(rawValue: UserDefaults.standard.string(forKey: "searchMode") ?? "") ?? .phrase {
+        didSet { UserDefaults.standard.set(searchMode.rawValue, forKey: "searchMode") }
+    }
     @Published var results: [Hit] = []
     @Published var selection = Set<String>()
     @Published var status = "Index a folder to get started."
@@ -28,7 +31,7 @@ final class Model: ObservableObject {
         do {
             let db = try Database(path: dbPath)
             let manual = results.filter { $0.snippet.isEmpty && selection.contains($0.path) }  // keep added files
-            results = try db.search(query, limit: 100).map { Hit(path: $0.path, snippet: $0.snippet) } + manual
+            results = try db.search(ftsQuery(query, mode: searchMode), limit: 100).map { Hit(path: $0.path, snippet: $0.snippet) } + manual
             status = "\(results.count) result(s)"
         } catch { status = "Search error: \(error.localizedDescription)" }
     }
