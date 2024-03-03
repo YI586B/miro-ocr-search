@@ -115,6 +115,8 @@ struct PreviewView: View {
     @State private var bgColors: [Color?] = []
     @State private var scanning = false
     @State private var failed = false
+    @State private var hoverIndex: Int?
+    @State private var hoverPoint: CGPoint = .zero
     @AppStorage(HL.show) private var show = true
     @AppStorage(HL.mode) private var mode = "box"
     @AppStorage(HL.boxHex) private var boxHex = HL.defaultBox
@@ -135,16 +137,42 @@ struct PreviewView: View {
             if let image {
                 Image(nsImage: image).resizable().scaledToFit()
                     .overlay(GeometryReader { geo in
-                        ForEach(Array((show ? matches : []).enumerated()), id: \.offset) { i, m in
-                            let w = m.rect.width * geo.size.width + 4
-                            let h = m.rect.height * geo.size.height + 4
-                            MatchView(text: m.text, size: CGSize(width: w, height: h), mode: mode,
-                                      box: box, textColor: txt, opacity: opacity, outline: outline,
-                                      design: design, weight: weight,
-                                      sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: bg)
-                                .position(x: m.rect.midX * geo.size.width,
-                                          y: (1 - m.rect.midY) * geo.size.height)
+                        ZStack(alignment: .topLeading) {
+                            ForEach(Array((show ? matches : []).enumerated()), id: \.offset) { i, m in
+                                let w = m.rect.width * geo.size.width + 4
+                                let h = m.rect.height * geo.size.height + 4
+                                MatchView(text: m.text, size: CGSize(width: w, height: h), mode: mode,
+                                          box: box, textColor: txt, opacity: opacity, outline: outline,
+                                          design: design, weight: weight,
+                                          sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: bg)
+                                    .position(x: m.rect.midX * geo.size.width,
+                                              y: (1 - m.rect.midY) * geo.size.height)
+                                    .onContinuousHover(coordinateSpace: .named("preview")) { phase in
+                                        switch phase {
+                                        case .active(let p): hoverIndex = i; hoverPoint = p
+                                        case .ended: if hoverIndex == i { hoverIndex = nil }
+                                        }
+                                    }
+                            }
+                            if let i = hoverIndex, matches.indices.contains(i) {
+                                let m = matches[i]
+                                let w = m.rect.width * geo.size.width + 4
+                                let h = m.rect.height * geo.size.height + 4
+                                MatchInfoPopup(text: m.text, mode: mode,
+                                               count: matches.filter { $0.text.caseInsensitiveCompare(m.text) == .orderedSame }.count,
+                                               boxSize: CGSize(width: w, height: h),
+                                               fontSize: fittedFontSize(for: m.text, weight: HL.fontWeight(weight),
+                                                                         design: HL.fontDesign(design), fitting: CGSize(width: w, height: h)),
+                                               design: design, weight: weight,
+                                               boxColor: box, textColor: txt,
+                                               bgColor: (bgColors.indices.contains(i) ? bgColors[i] : nil) ?? bg,
+                                               opacity: opacity)
+                                    .allowsHitTesting(false)   // never steals hover from the match it describes
+                                    .position(x: min(hoverPoint.x + 110, geo.size.width - 100),
+                                              y: min(hoverPoint.y + 70, geo.size.height - 60))
+                            }
                         }
+                        .coordinateSpace(name: "preview")
                     })
                     .padding(12)
             }

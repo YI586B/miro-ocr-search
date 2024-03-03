@@ -106,6 +106,59 @@ struct MatchView: View {
     }
 }
 
+/// Small card that follows the cursor while hovering a match overlay, showing what it is and
+/// how it's drawn: the matched text, its font/size/colors (or box size/color), and how many
+/// times that same text was found on this image.
+struct MatchInfoPopup: View {
+    let text: String
+    let mode: String
+    let count: Int
+    let boxSize: CGSize
+    let fontSize: CGFloat
+    let design: String, weight: String
+    let boxColor: Color, textColor: Color, bgColor: Color
+    let opacity: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(text).font(.headline).lineLimit(2)
+            Text("\(count) occurrence\(count == 1 ? "" : "s") on this image")
+                .font(.caption).foregroundStyle(.secondary)
+            Divider()
+            if mode == "text" {
+                row("Font", "\(fontLabel) \(weightLabel), \(Int(fontSize.rounded()))pt")
+                colorRow("Text color", textColor)
+                colorRow("Background", bgColor)
+            } else {
+                row("Box size", "\(Int(boxSize.width.rounded()))×\(Int(boxSize.height.rounded())) pt")
+                colorRow("Box color", boxColor)
+                row("Fill strength", "\(Int(opacity * 100))%")
+            }
+        }
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.secondary.opacity(0.2)))
+        .shadow(radius: 6, y: 2)
+        .frame(width: 200, alignment: .leading)
+    }
+
+    private var fontLabel: String { design == "default" ? "System" : design.capitalized }
+    private var weightLabel: String { weight.capitalized }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack { Text(label).foregroundStyle(.secondary); Spacer(); Text(value) }.font(.caption)
+    }
+    private func colorRow(_ label: String, _ c: Color) -> some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary)
+            Spacer()
+            RoundedRectangle(cornerRadius: 3).fill(c).frame(width: 14, height: 14)
+                .overlay(RoundedRectangle(cornerRadius: 3).stroke(.secondary.opacity(0.3)))
+            Text(c.hexString)
+        }.font(.caption)
+    }
+}
+
 struct SettingsView: View {
     @AppStorage(HL.show) private var show = true
     @AppStorage(HL.mode) private var mode = "box"
