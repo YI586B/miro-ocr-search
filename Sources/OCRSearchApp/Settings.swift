@@ -23,7 +23,8 @@ enum HL {
     static let opacity = "highlightOpacity"
     static let outline = "highlightOutline"
     static let textHex = "highlightTextHex"
-    static let bgHex = "highlightBgHex"          // text-mode background, when the image can't be sampled
+    static let bgHex = "highlightBgHex"          // text-mode background, when auto-match is off or sampling fails
+    static let autoBg = "highlightAutoBg"        // sample the background from the image instead of using bgHex
     static let design = "highlightFontDesign"    // default | rounded | serif | monospaced
     static let weight = "highlightFontWeight"    // regular | medium | bold
     static let defaultBox = "#FFD60A"
@@ -80,17 +81,20 @@ struct MatchView: View {
     let box: Color, textColor: Color
     let opacity: Double, outline: Bool
     let design: String, weight: String
-    /// Color sampled from the image right around this match, if sampling succeeded; falls back
-    /// to `background` (the user-picked color) when it didn't, e.g. no image loaded yet.
+    /// Color sampled from the image right around this match, used when `autoBackground` is on
+    /// and sampling succeeded. Otherwise (auto-match off, or sampling failed, e.g. no image
+    /// loaded yet) falls back to `background`, the user-picked color — which is then exactly
+    /// what's drawn, so the color picker showing it stays truthful.
     var sampled: Color? = nil
     var background: Color = .white
+    var autoBackground: Bool = true
 
     var body: some View {
         Group {
             if mode == "text" {
                 let w = HL.fontWeight(weight), d = HL.fontDesign(design)
                 ZStack {
-                    Rectangle().fill(sampled ?? background)
+                    Rectangle().fill((autoBackground ? sampled : nil) ?? background)
                     Text(text)
                         .font(.system(size: fittedFontSize(for: text, weight: w, design: d, fitting: size), weight: w, design: d))
                         .foregroundStyle(textColor)
@@ -167,6 +171,7 @@ struct SettingsView: View {
     @AppStorage(HL.outline) private var outline = true
     @AppStorage(HL.textHex) private var textHex = HL.defaultText
     @AppStorage(HL.bgHex) private var bgHex = HL.defaultBg
+    @AppStorage(HL.autoBg) private var autoBg = true
     @AppStorage(HL.design) private var design = "default"
     @AppStorage(HL.weight) private var weight = "regular"
 
@@ -194,8 +199,9 @@ struct SettingsView: View {
             Section("Text overlay") {
                 HStack {
                     ColorPicker("Font color", selection: txt, supportsOpacity: false)
-                    ColorPicker("Background", selection: bg, supportsOpacity: false)
+                    ColorPicker("Background", selection: bg, supportsOpacity: false).disabled(autoBg)
                 }
+                Toggle("Match image color automatically", isOn: $autoBg)
                 Picker("Font", selection: $design) {
                     Text("System").tag("default"); Text("Rounded").tag("rounded")
                     Text("Serif").tag("serif"); Text("Monospaced").tag("monospaced")
@@ -203,7 +209,9 @@ struct SettingsView: View {
                 Picker("Weight", selection: $weight) {
                     Text("Regular").tag("regular"); Text("Medium").tag("medium"); Text("Bold").tag("bold")
                 }
-                Text("Matched words are re-drawn in this font and color, over a background patch sampled from the image around them (so they cover the original text) — or the Background color above when sampling isn't possible.")
+                Text(autoBg
+                     ? "Matched words are re-drawn in this font and color, over a background patch sampled from the image around them (so they cover the original text). The Background swatch above is only a fallback, used if sampling isn't possible — turn this off to use it everywhere instead."
+                     : "Matched words are re-drawn over the Background color above, everywhere.")
                     .font(.caption).foregroundStyle(.secondary)
             }.disabled(mode == "box")
 
@@ -213,14 +221,15 @@ struct SettingsView: View {
                     Text("Screen Active 7h 31m").font(.title3).foregroundStyle(.secondary)
                     MatchView(text: "Screen Active", size: CGSize(width: 150, height: 26), mode: mode,
                               box: box.wrappedValue, textColor: txt.wrappedValue, opacity: opacity,
-                              outline: outline, design: design, weight: weight, background: bg.wrappedValue)
+                              outline: outline, design: design, weight: weight,
+                              background: bg.wrappedValue, autoBackground: autoBg)
                         .offset(x: -50)
                 }.frame(height: 50)
             }
 
             Button("Reset") {
                 show = true; mode = "box"; boxHex = HL.defaultBox; opacity = 0.35; outline = true
-                textHex = HL.defaultText; bgHex = HL.defaultBg; design = "default"; weight = "regular"
+                textHex = HL.defaultText; bgHex = HL.defaultBg; autoBg = true; design = "default"; weight = "regular"
             }
         }
         .padding(20).frame(width: 460)

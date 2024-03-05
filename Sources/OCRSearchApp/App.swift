@@ -30,11 +30,12 @@ struct PreviewRequest: Codable, Hashable {
     var mode: SearchMode = .phrase
 }
 
-/// Approximate the image's background color right around each match box, so text-overlay mode
-/// can paint the redrawn word over a same-colored patch instead of just floating on top of the
-/// original characters. Samples the four corners of each box, inset a little inward — for
-/// ordinary text those corners are rarely covered by a glyph stroke — and averages them; falls
-/// back to `nil` (caller uses its own default) if the image can't be read as a bitmap.
+/// Approximate the image's background color immediately around each match box, so text-overlay
+/// mode can paint the redrawn word over a same-colored patch instead of just floating on top of
+/// the original characters. Samples just outside the box on all four sides — at the midpoint of
+/// each edge, offset outward by a small margin so it lands past any anti-aliased glyph pixel,
+/// never inside the box itself — and averages them; falls back to `nil` (caller uses its own
+/// default) if the image can't be read as a bitmap.
 func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
     guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
           let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return Array(repeating: nil, count: rects.count) }
@@ -45,13 +46,14 @@ func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
         // Vision rects are normalised with origin bottom-left; bitmap pixel rows run top-down.
         let x0 = rect.minX, x1 = rect.maxX
         let yTop = 1 - rect.maxY, yBottom = 1 - rect.minY
-        let insetX = (x1 - x0) * 0.1, insetY = (yBottom - yTop) * 0.1
-        let corners: [(CGFloat, CGFloat)] = [
-            (x0 + insetX, yTop + insetY), (x1 - insetX, yTop + insetY),
-            (x0 + insetX, yBottom - insetY), (x1 - insetX, yBottom - insetY)
+        let midX = (x0 + x1) / 2, midY = (yTop + yBottom) / 2
+        let marginX = max((x1 - x0) * 0.15, 2 / CGFloat(w)), marginY = max((yBottom - yTop) * 0.15, 2 / CGFloat(h))
+        let points: [(CGFloat, CGFloat)] = [
+            (midX, yTop - marginY), (midX, yBottom + marginY),   // just above, just below
+            (x0 - marginX, midY), (x1 + marginX, midY)           // just left, just right
         ]
         var r = 0.0, g = 0.0, b = 0.0, n = 0.0
-        for (nx, ny) in corners {
+        for (nx, ny) in points {
             let px = min(max(Int(nx * CGFloat(w)), 0), w - 1)
             let py = min(max(Int(ny * CGFloat(h)), 0), h - 1)
             guard let c = rep.colorAt(x: px, y: py)?.usingColorSpace(.sRGB) else { continue }
@@ -124,6 +126,7 @@ struct PreviewView: View {
     @AppStorage(HL.outline) private var outline = true
     @AppStorage(HL.textHex) private var textHex = HL.defaultText
     @AppStorage(HL.bgHex) private var bgHex = HL.defaultBg
+    @AppStorage(HL.autoBg) private var autoBg = true
     @AppStorage(HL.design) private var design = "default"
     @AppStorage(HL.weight) private var weight = "regular"
 
@@ -144,7 +147,8 @@ struct PreviewView: View {
                                 MatchView(text: m.text, size: CGSize(width: w, height: h), mode: mode,
                                           box: box, textColor: txt, opacity: opacity, outline: outline,
                                           design: design, weight: weight,
-                                          sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: bg)
+                                          sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: bg,
+                                          autoBackground: autoBg)
                                     .position(x: m.rect.midX * geo.size.width,
                                               y: (1 - m.rect.midY) * geo.size.height)
                                     .onContinuousHover(coordinateSpace: .named("preview")) { phase in
@@ -165,7 +169,7 @@ struct PreviewView: View {
                                                                          design: HL.fontDesign(design), fitting: CGSize(width: w, height: h)),
                                                design: design, weight: weight,
                                                boxColor: box, textColor: txt,
-                                               bgColor: (bgColors.indices.contains(i) ? bgColors[i] : nil) ?? bg,
+                                               bgColor: (autoBg ? (bgColors.indices.contains(i) ? bgColors[i] : nil) : nil) ?? bg,
                                                opacity: opacity)
                                     .allowsHitTesting(false)   // never steals hover from the match it describes
                                     .position(x: min(hoverPoint.x + 110, geo.size.width - 100),
@@ -193,7 +197,11 @@ struct PreviewView: View {
             if mode == "text" {
                 ColorPicker("Font", selection: txtBinding, supportsOpacity: false)
                 ColorPicker("Background", selection: Binding<Color>(get: { bg }, set: { bgHex = $0.hexString }),
-                             supportsOpacity: false).help("Used where the image's own background can't be sampled")
+                             supportsOpacity: false).disabled(autoBg)
+                    .help(autoBg ? "Off — sampled from the image instead. Turn off \"Auto\" to use this color everywhere."
+                                 : "Used behind every redrawn word")
+                Toggle("Auto", isOn: $autoBg)
+                    .help("Pick up the color immediately around each match and use it as its background")
             }
             else { ColorPicker("Box", selection: boxBinding, supportsOpacity: false) }
             Button("Reveal in Finder") {
