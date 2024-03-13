@@ -196,9 +196,15 @@ struct PreviewView: View {
             }.pickerStyle(.segmented).disabled(!show)
             if mode == "text" {
                 ColorPicker("Font", selection: txtBinding, supportsOpacity: false)
-                ColorPicker("Background", selection: Binding<Color>(get: { bg }, set: { bgHex = $0.hexString }),
+                // While Auto is on, show (read-only) whatever color is actually behind the
+                // hovered match right now, instead of the unrelated stored fallback — so the
+                // swatch never shows something different from what's on the image.
+                let liveBg: Color = autoBg
+                    ? ((hoverIndex.flatMap { bgColors.indices.contains($0) ? bgColors[$0] : nil }) ?? bg)
+                    : bg
+                ColorPicker("Background", selection: Binding<Color>(get: { liveBg }, set: { bgHex = $0.hexString }),
                              supportsOpacity: false).disabled(autoBg)
-                    .help(autoBg ? "Off — sampled from the image instead. Turn off \"Auto\" to use this color everywhere."
+                    .help(autoBg ? "Showing the color currently sampled from the image (hover a match). Turn off \"Auto\" to pick one yourself."
                                  : "Used behind every redrawn word")
                 Toggle("Auto", isOn: $autoBg)
                     .help("Pick up the color immediately around each match and use it as its background")
