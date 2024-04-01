@@ -27,6 +27,7 @@ enum HL {
     static let autoBg = "highlightAutoBg"        // sample the background from the image instead of using bgHex
     static let design = "highlightFontDesign"    // default | rounded | serif | monospaced
     static let weight = "highlightFontWeight"    // regular | medium | bold
+    static let autoFont = "highlightAutoFont"    // auto-match an installed font instead of using design
     static let defaultBox = "#FFD60A"
     static let defaultText = "#000000"
     static let defaultBg = "#FFFFFF"
@@ -88,17 +89,26 @@ struct MatchView: View {
     var sampled: Color? = nil
     var background: Color = .white
     var autoBackground: Bool = true
+    /// Installed font family auto-matched to this text (see bestMatchingFont), used in place of
+    /// `design` when `autoFont` is on and a match was found.
+    var matchedFont: String? = nil
+    var autoFont: Bool = false
 
     var body: some View {
         Group {
             if mode == "text" {
                 let w = HL.fontWeight(weight), d = HL.fontDesign(design)
+                let useMatch = autoFont && matchedFont != nil
+                let fontSize = effectiveFontSize(for: text, weight: w, design: d, matchedFamily: matchedFont,
+                                                  autoFont: autoFont, fitting: size)
                 ZStack {
                     Rectangle().fill((autoBackground ? sampled : nil) ?? background)
-                    Text(text)
-                        .font(.system(size: fittedFontSize(for: text, weight: w, design: d, fitting: size), weight: w, design: d))
-                        .foregroundStyle(textColor)
-                        .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
+                    Group {
+                        if useMatch { Text(text).font(.custom(matchedFont!, size: fontSize)).fontWeight(w) }
+                        else { Text(text).font(.system(size: fontSize, weight: w, design: d)) }
+                    }
+                    .foregroundStyle(textColor)
+                    .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
                 }
                 .frame(width: size.width, height: size.height)
             } else {
@@ -122,6 +132,8 @@ struct MatchInfoPopup: View {
     let design: String, weight: String
     let boxColor: Color, textColor: Color, bgColor: Color
     let opacity: Double
+    var matchedFont: String? = nil
+    var autoFont: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -130,7 +142,13 @@ struct MatchInfoPopup: View {
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
             if mode == "text" {
-                row("Font", "\(fontLabel) \(weightLabel), \(Int(fontSize.rounded()))pt")
+                if autoFont, let mf = matchedFont {
+                    row("Font", "\(mf) (auto), \(Int(fontSize.rounded()))pt")
+                } else if autoFont {
+                    row("Font", "no match found, \(Int(fontSize.rounded()))pt")
+                } else {
+                    row("Font", "\(fontLabel) \(weightLabel), \(Int(fontSize.rounded()))pt")
+                }
                 colorRow("Text color", textColor)
                 colorRow("Background", bgColor)
             } else {
@@ -174,6 +192,7 @@ struct SettingsView: View {
     @AppStorage(HL.autoBg) private var autoBg = true
     @AppStorage(HL.design) private var design = "default"
     @AppStorage(HL.weight) private var weight = "regular"
+    @AppStorage(HL.autoFont) private var autoFont = false
 
     var body: some View {
         let box = Binding<Color>(get: { Color(hex: boxHex) ?? .yellow }, set: { boxHex = $0.hexString })
@@ -205,13 +224,18 @@ struct SettingsView: View {
                 Picker("Font", selection: $design) {
                     Text("System").tag("default"); Text("Rounded").tag("rounded")
                     Text("Serif").tag("serif"); Text("Monospaced").tag("monospaced")
-                }
+                }.disabled(autoFont)
                 Picker("Weight", selection: $weight) {
                     Text("Regular").tag("regular"); Text("Medium").tag("medium"); Text("Bold").tag("bold")
                 }
+                Toggle("Auto-match an installed font", isOn: $autoFont)
                 Text(autoBg
                      ? "Matched words are re-drawn in this font and color, over a background patch sampled from the image around them (so they cover the original text). The Background swatch above is only a fallback, used if sampling isn't possible — turn this off to use it everywhere instead."
                      : "Matched words are re-drawn over the Background color above, everywhere.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text(autoFont
+                     ? "Instead of the Font above, each match is redrawn in whichever installed font (excluding system/SF fonts) best matches its size and proportions."
+                     : "Uses the Font and Weight above for every match.")
                     .font(.caption).foregroundStyle(.secondary)
             }.disabled(mode == "box")
 
@@ -229,7 +253,8 @@ struct SettingsView: View {
 
             Button("Reset") {
                 show = true; mode = "box"; boxHex = HL.defaultBox; opacity = 0.35; outline = true
-                textHex = HL.defaultText; bgHex = HL.defaultBg; autoBg = true; design = "default"; weight = "regular"
+                textHex = HL.defaultText; bgHex = HL.defaultBg; autoBg = true
+                design = "default"; weight = "regular"; autoFont = false
             }
         }
         .padding(20).frame(width: 460)

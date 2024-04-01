@@ -36,6 +36,15 @@ struct PreviewRequest: Codable, Hashable {
 /// each edge, offset outward by a small margin so it lands past any anti-aliased glyph pixel,
 /// never inside the box itself — and averages them; falls back to `nil` (caller uses its own
 /// default) if the image can't be read as a bitmap.
+/// An image's pixel dimensions, read from its metadata without decoding the full bitmap.
+func imagePixelSize(at path: String) -> CGSize? {
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+          let w = props[kCGImagePropertyPixelWidth] as? CGFloat,
+          let h = props[kCGImagePropertyPixelHeight] as? CGFloat else { return nil }
+    return CGSize(width: w, height: h)
+}
+
 func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
     guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
           let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return Array(repeating: nil, count: rects.count) }
@@ -115,6 +124,7 @@ struct PreviewView: View {
     @State private var image: NSImage?
     @State private var matches: [TextMatch] = []
     @State private var bgColors: [Color?] = []
+    @State private var matchedFonts: [String?] = []
     @State private var scanning = false
     @State private var failed = false
     @State private var hoverIndex: Int?
@@ -129,6 +139,7 @@ struct PreviewView: View {
     @AppStorage(HL.autoBg) private var autoBg = true
     @AppStorage(HL.design) private var design = "default"
     @AppStorage(HL.weight) private var weight = "regular"
+    @AppStorage(HL.autoFont) private var autoFont = false
 
     var body: some View {
         let box = Color(hex: boxHex) ?? .yellow
@@ -148,7 +159,9 @@ struct PreviewView: View {
                                           box: box, textColor: txt, opacity: opacity, outline: outline,
                                           design: design, weight: weight,
                                           sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: bg,
-                                          autoBackground: autoBg)
+                                          autoBackground: autoBg,
+                                          matchedFont: matchedFonts.indices.contains(i) ? matchedFonts[i] : nil,
+                                          autoFont: autoFont)
                                     .position(x: m.rect.midX * geo.size.width,
                                               y: (1 - m.rect.midY) * geo.size.height)
                                     .onContinuousHover(coordinateSpace: .named("preview")) { phase in
@@ -162,15 +175,16 @@ struct PreviewView: View {
                                 let m = matches[i]
                                 let w = m.rect.width * geo.size.width + 4
                                 let h = m.rect.height * geo.size.height + 4
+                                let mf = matchedFonts.indices.contains(i) ? matchedFonts[i] : nil
                                 MatchInfoPopup(text: m.text, mode: mode,
                                                count: matches.filter { $0.text.caseInsensitiveCompare(m.text) == .orderedSame }.count,
                                                boxSize: CGSize(width: w, height: h),
-                                               fontSize: fittedFontSize(for: m.text, weight: HL.fontWeight(weight),
-                                                                         design: HL.fontDesign(design), fitting: CGSize(width: w, height: h)),
+                                               fontSize: effectiveFontSize(for: m.text, weight: HL.fontWeight(weight), design: HL.fontDesign(design),
+                                                                            matchedFamily: mf, autoFont: autoFont, fitting: CGSize(width: w, height: h)),
                                                design: design, weight: weight,
                                                boxColor: box, textColor: txt,
                                                bgColor: (autoBg ? (bgColors.indices.contains(i) ? bgColors[i] : nil) : nil) ?? bg,
-                                               opacity: opacity)
+                                               opacity: opacity, matchedFont: mf, autoFont: autoFont)
                                     .allowsHitTesting(false)   // never steals hover from the match it describes
                                     .position(x: min(hoverPoint.x + 110, geo.size.width - 100),
                                               y: min(hoverPoint.y + 70, geo.size.height - 60))
@@ -208,6 +222,8 @@ struct PreviewView: View {
                                  : "Used behind every redrawn word")
                 Toggle("Auto", isOn: $autoBg)
                     .help("Pick up the color immediately around each match and use it as its background")
+                Toggle("Auto font", isOn: $autoFont)
+                    .help("Redraw each match in whichever installed font (excluding system/SF fonts) best matches it, instead of the Font chosen in Settings")
             }
             else { ColorPicker("Box", selection: boxBinding, supportsOpacity: false) }
             Button("Reveal in Finder") {
@@ -220,6 +236,7 @@ struct PreviewView: View {
             image = NSImage(contentsOfFile: path)
             failed = image == nil
             bgColors = []
+            matchedFonts = []
             let terms = searchTerms(query, mode: searchMode)
             guard image != nil, !terms.isEmpty else { return }
             scanning = true
@@ -231,8 +248,32 @@ struct PreviewView: View {
             bgColors = await Task.detached(priority: .userInitiated) {
                 sampledBackgroundColors(at: p, rects: rects)
             }.value
+            if autoFont { await detectFonts() }
             scanning = false
         }
+        .onChange(of: autoFont) { on in
+            if on && matchedFonts.isEmpty { Task { await detectFonts() } }
+        }
+    }
+
+    /// Auto-matches each found match's text to the closest-looking installed font (see
+    /// bestMatchingFont), excluding Apple's system/SF fonts. Skipped unless auto-font is on, or
+    /// asked for explicitly, since scanning every installed family is real work — only worth
+    /// paying for when the feature is actually in use.
+    private func detectFonts() async {
+        guard !matches.isEmpty else { return }
+        let p = path
+        let items = matches.map { (text: $0.text, rect: $0.rect) }
+        let families = candidateFontFamilies()
+        let bold = weight == "bold"
+        matchedFonts = await Task.detached(priority: .userInitiated) {
+            guard let px = imagePixelSize(at: p) else { return Array(repeating: nil, count: items.count) }
+            return items.map {
+                bestMatchingFont(for: $0.text, bold: bold,
+                                  fitting: CGSize(width: $0.rect.width * px.width, height: $0.rect.height * px.height),
+                                  from: families)
+            }
+        }.value
     }
 }
 
