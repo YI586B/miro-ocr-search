@@ -234,7 +234,7 @@ struct SettingsView: View {
                      : "Matched words are re-drawn over the Background color above, everywhere.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(autoFont
-                     ? "Instead of the Font above, each match is redrawn in whichever installed font (excluding system/SF fonts) best matches its size and proportions."
+                     ? "Instead of the Font above, each match is redrawn in whichever installed font best matches its size and proportions — or in \(systemFontReplacement) if that turns out to be the system font."
                      : "Uses the Font and Weight above for every match.")
                     .font(.caption).foregroundStyle(.secondary)
             }.disabled(mode == "box")

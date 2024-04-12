@@ -223,7 +223,7 @@ struct PreviewView: View {
                 Toggle("Auto", isOn: $autoBg)
                     .help("Pick up the color immediately around each match and use it as its background")
                 Toggle("Auto font", isOn: $autoFont)
-                    .help("Redraw each match in whichever installed font (excluding system/SF fonts) best matches it, instead of the Font chosen in Settings")
+                    .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font), instead of the Font chosen in Settings")
             }
             else { ColorPicker("Box", selection: boxBinding, supportsOpacity: false) }
             Button("Reveal in Finder") {
