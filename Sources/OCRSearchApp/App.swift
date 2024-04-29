@@ -3,10 +3,23 @@ import AppKit
 import ImageIO
 import OCRSearchCore
 
+/// Sources/assets/logo.png, resolved relative to this source file's own location (not the
+/// process's current working directory) so it's found the same way regardless of how the app
+/// was launched.
+let appLogo: NSImage? = {
+    let url = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()   // App.swift -> Sources/OCRSearchApp/
+        .deletingLastPathComponent()   // -> Sources/
+        .appendingPathComponent("assets/logo.png")
+    return NSImage(contentsOfFile: url.path)
+}()
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.regular)      // needed when launched via `swift run`
         NSApp.activate(ignoringOtherApps: true)
+        registerBundledFonts()
+        if let appLogo { NSApp.applicationIconImage = appLogo }   // Dock icon while running
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
 }
@@ -350,7 +363,10 @@ struct MiroSheet: View {
     @Binding var isPresented: Bool
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Export to Miro").font(.headline)
+            HStack(spacing: 8) {
+                if let appLogo { Image(nsImage: appLogo).resizable().scaledToFit().frame(width: 24, height: 24) }
+                Text("Export to Miro").font(.headline)
+            }
             SecureField("Miro access token (boards:read, boards:write) — saved in Keychain", text: $m.token)
             TextField("Existing board ID (leave empty to create a new board)", text: $m.boardID)
             TextField("New board name", text: $m.boardName).disabled(!m.boardID.isEmpty)

@@ -1,5 +1,28 @@
 import SwiftUI
 import AppKit
+import CoreText
+
+/// Sources/assets/fonts, resolved relative to this source file's own location rather than the
+/// process's current working directory, so it's found the same way whether the app is launched
+/// via `swift run`, run-app.command, or the built binary directly.
+private var bundledFontsDirectory: URL {
+    URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()   // FontMatch.swift -> Sources/OCRSearchApp/
+        .deletingLastPathComponent()   // -> Sources/
+        .appendingPathComponent("assets/fonts")
+}
+
+/// Registers the bundled Noto Sans fonts (Sources/assets/fonts) with this process, so family
+/// "Noto Sans" becomes available right alongside whatever's actually installed on the system
+/// running the app — without a system-wide install. Scoped to `.process`, so it never touches
+/// the system font registry; safe to call more than once. Call once at launch, before any
+/// font-matching happens.
+func registerBundledFonts() {
+    guard let files = try? FileManager.default.contentsOfDirectory(at: bundledFontsDirectory, includingPropertiesForKeys: nil) else { return }
+    for url in files where url.pathExtension.lowercased() == "ttf" {
+        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+    }
+}
 
 /// Installed font family names usable as text-overlay match candidates. Excludes only Apple's
 /// hidden internal pseudo-families (dot-prefixed, e.g. ".AppleSystemUIFont"), which aren't real,
@@ -13,8 +36,10 @@ func candidateFontFamilies() -> [String] {
         .sorted()
 }
 
-/// The font substituted in whenever the best match turns out to be a system font.
-let systemFontReplacement = "Microsoft Sans Serif"
+/// The font substituted in whenever the best match turns out to be a system font. Noto Sans is
+/// bundled with the app (Sources/assets/fonts) and registered at launch via
+/// registerBundledFonts(), so it's available even on a machine that never installed it.
+let systemFontReplacement = "Noto Sans"
 
 /// True for Apple's system UI font and its SF-branded family members (SF Pro, SF Mono, SF
 /// Compact, ...).
