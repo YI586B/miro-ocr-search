@@ -106,3 +106,13 @@ func effectiveFontSize(for text: String, weight: Font.Weight, design: Font.Desig
     }
     return fittedFontSize(for: text, weight: weight, design: design, fitting: box)
 }
+
+/// The exact renderable name (PostScript name, e.g. "NotoSans-Bold") for a family/weight combo —
+/// what SwiftUI's Font.custom(_:size:) needs to reliably pick up a font. A bare family name isn't
+/// guaranteed to resolve there the same way AppKit's NSFont(name:) resolves it, and when it
+/// doesn't, Font.custom silently falls back to the system font — which is exactly what made
+/// auto-font look like it wasn't doing anything. Falls back to the family name if resolution
+/// somehow still fails, so callers always get a string to pass along.
+func renderableFontName(family: String, bold: Bool) -> String {
+    nsFont(family: family, bold: bold, size: 12)?.fontName ?? family
+}

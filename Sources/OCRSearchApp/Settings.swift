@@ -104,7 +104,9 @@ struct MatchView: View {
                 ZStack {
                     Rectangle().fill((autoBackground ? sampled : nil) ?? background)
                     Group {
-                        if useMatch { Text(text).font(.custom(matchedFont!, size: fontSize)).fontWeight(w) }
+                        if useMatch {
+                            Text(text).font(.custom(renderableFontName(family: matchedFont!, bold: weight == "bold"), size: fontSize))
+                        }
                         else { Text(text).font(.system(size: fontSize, weight: w, design: d)) }
                     }
                     .foregroundStyle(textColor)
