@@ -14,6 +14,22 @@ let appLogo: NSImage? = {
     return NSImage(contentsOfFile: url.path)
 }()
 
+/// Small rounded Miro logo badge, marking the app's Miro-related actions (export button, the
+/// export sheet, "open board"). Square, dark card with the wordmark baked in — looks right at
+/// any size without needing its own background.
+struct MiroBadge: View {
+    var size: CGFloat = 16
+    var body: some View {
+        Group {
+            if let appLogo {
+                Image(nsImage: appLogo).resizable().scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.regular)      // needed when launched via `swift run`
@@ -336,7 +352,9 @@ struct ContentView: View {
             HStack {
                 Text(m.status).font(.callout).foregroundStyle(.secondary).lineLimit(1)
                 if m.busy { ProgressView().controlSize(.small) }
-                if let l = m.link { Button("Open board") { NSWorkspace.shared.open(l) } }
+                if let l = m.link {
+                    Button { NSWorkspace.shared.open(l) } label: { MiroBadge(size: 14); Text("Open board") }
+                }
                 Spacer()
                 Button("Select all") { m.selection = Set(m.results.map(\.id)) }.disabled(m.results.isEmpty)
                 Menu("Export to file") {
@@ -344,7 +362,7 @@ struct ContentView: View {
                     Button("Markdown…") { m.exportToFile(.markdown) }
                     Button("Copy images to folder…") { m.exportToFile(.folder) }
                 }.disabled(m.selection.isEmpty || m.busy).fixedSize()
-                Button("Export \(m.selection.count) to Miro…") { showMiro = true }
+                Button { showMiro = true } label: { MiroBadge(size: 14); Text("Export \(m.selection.count) to Miro…") }
                     .disabled(m.selection.isEmpty || m.busy).keyboardShortcut(.defaultAction)
             }.padding(10)
         }
@@ -364,7 +382,7 @@ struct MiroSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                if let appLogo { Image(nsImage: appLogo).resizable().scaledToFit().frame(width: 24, height: 24) }
+                MiroBadge(size: 28)
                 Text("Export to Miro").font(.headline)
             }
             SecureField("Miro access token (boards:read, boards:write) — saved in Keychain", text: $m.token)
