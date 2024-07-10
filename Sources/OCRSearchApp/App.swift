@@ -158,6 +158,7 @@ struct PreviewView: View {
     @State private var failed = false
     @State private var hoverIndex: Int?
     @State private var hoverPoint: CGPoint = .zero
+    @State private var showStylePopover = false
     @AppStorage(HL.show) private var show = true
     @AppStorage(HL.mode) private var mode = "box"
     @AppStorage(HL.boxHex) private var boxHex = HL.defaultBox
@@ -237,24 +238,38 @@ struct PreviewView: View {
             Picker("Show as", selection: $mode) {
                 Text("Boxes").tag("box"); Text("Text").tag("text")
             }.pickerStyle(.segmented).disabled(!show)
-            if mode == "text" {
-                ColorPicker("Font", selection: txtBinding, supportsOpacity: false)
-                // While Auto is on, show (read-only) whatever color is actually behind the
-                // hovered match right now, instead of the unrelated stored fallback — so the
-                // swatch never shows something different from what's on the image.
-                let liveBg: Color = autoBg
-                    ? ((hoverIndex.flatMap { bgColors.indices.contains($0) ? bgColors[$0] : nil }) ?? bg)
-                    : bg
-                ColorPicker("Background", selection: Binding<Color>(get: { liveBg }, set: { bgHex = $0.hexString }),
-                             supportsOpacity: false).disabled(autoBg)
-                    .help(autoBg ? "Showing the color currently sampled from the image (hover a match). Turn off \"Auto\" to pick one yourself."
-                                 : "Used behind every redrawn word")
-                Toggle("Auto", isOn: $autoBg)
-                    .help("Pick up the color immediately around each match and use it as its background")
-                Toggle("Auto font", isOn: $autoFont)
-                    .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font), instead of the Font chosen in Settings")
-            }
-            else { ColorPicker("Box", selection: boxBinding, supportsOpacity: false) }
+            // All the fine-grained style controls live behind one button instead of each being
+            // its own toolbar item — with Font/Background/Auto/Auto font all inline, this bar
+            // overflowed past a handful of items and the rest silently landed in the hidden
+            // ">>" menu, which is why the Background picker (and friends) seemed to vanish.
+            Button { showStylePopover = true } label: { Image(systemName: "paintpalette") }
+                .help("Overlay style")
+                .popover(isPresented: $showStylePopover, arrowEdge: .bottom) {
+                    // While Auto is on, show (read-only) whatever color is actually behind the
+                    // hovered match right now, instead of the unrelated stored fallback — so the
+                    // swatch never shows something different from what's on the image.
+                    let liveBg: Color = autoBg
+                        ? ((hoverIndex.flatMap { bgColors.indices.contains($0) ? bgColors[$0] : nil }) ?? bg)
+                        : bg
+                    VStack(alignment: .leading, spacing: 10) {
+                        if mode == "text" {
+                            HStack {
+                                ColorPicker("Font", selection: txtBinding, supportsOpacity: false)
+                                ColorPicker("Background", selection: Binding<Color>(get: { liveBg }, set: { bgHex = $0.hexString }),
+                                             supportsOpacity: false).disabled(autoBg)
+                                    .help(autoBg ? "Showing the color currently sampled from the image (hover a match). Turn off \"Auto\" to pick one yourself."
+                                                 : "Used behind every redrawn word")
+                            }
+                            Toggle("Match image color automatically", isOn: $autoBg)
+                                .help("Pick up the color immediately around each match and use it as its background")
+                            Toggle("Auto-match an installed font", isOn: $autoFont)
+                                .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font), instead of the Font chosen in Settings")
+                        } else {
+                            ColorPicker("Box", selection: boxBinding, supportsOpacity: false)
+                        }
+                    }
+                    .padding(14).frame(width: 280)
+                }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
             }
