@@ -93,19 +93,25 @@ struct MatchView: View {
     /// `design` when `autoFont` is on and a match was found.
     var matchedFont: String? = nil
     var autoFont: Bool = false
+    /// Precomputed by the caller (see PreviewView.recomputeFontSizes) rather than fitted here on
+    /// every render: fitting requires several font-metric lookups, and this view's body re-runs
+    /// on every mouse-move while hovering any match (not just this one), which made auto-font in
+    /// particular noticeably laggy when computed inline.
+    var fontSize: CGFloat = 12
+    /// Precomputed exact renderable name (PostScript name) for matchedFont, see
+    /// renderableFontName -- resolving it here on every render was the same kind of hot-path cost.
+    var renderedFontName: String? = nil
 
     var body: some View {
         Group {
             if mode == "text" {
                 let w = HL.fontWeight(weight), d = HL.fontDesign(design)
-                let useMatch = autoFont && matchedFont != nil
-                let fontSize = effectiveFontSize(for: text, weight: w, design: d, matchedFamily: matchedFont,
-                                                  autoFont: autoFont, fitting: size)
+                let useMatch = autoFont && renderedFontName != nil
                 ZStack {
                     Rectangle().fill((autoBackground ? sampled : nil) ?? background)
                     Group {
                         if useMatch {
-                            Text(text).font(.custom(renderableFontName(family: matchedFont!, bold: weight == "bold"), size: fontSize))
+                            Text(text).font(.custom(renderedFontName!, size: fontSize))
                         }
                         else { Text(text).font(.system(size: fontSize, weight: w, design: d)) }
                     }
@@ -248,7 +254,9 @@ struct SettingsView: View {
                     MatchView(text: "Screen Active", size: CGSize(width: 150, height: 26), mode: mode,
                               box: box.wrappedValue, textColor: txt.wrappedValue, opacity: opacity,
                               outline: outline, design: design, weight: weight,
-                              background: bg.wrappedValue, autoBackground: autoBg)
+                              background: bg.wrappedValue, autoBackground: autoBg,
+                              fontSize: fittedFontSize(for: "Screen Active", weight: HL.fontWeight(weight),
+                                                        design: HL.fontDesign(design), fitting: CGSize(width: 150, height: 26)))
                         .offset(x: -50)
                 }.frame(height: 50)
             }

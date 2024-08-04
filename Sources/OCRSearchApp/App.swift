@@ -154,6 +154,17 @@ struct PreviewView: View {
     @State private var matches: [TextMatch] = []
     @State private var bgColors: [Color?] = []
     @State private var matchedFonts: [String?] = []
+    @State private var pixelSize: CGSize = .zero
+    /// Fitted font size per match, computed once at the image's native pixel scale rather than
+    /// on demand — fitting takes several font-metric lookups, and computing it live inside
+    /// MatchView/MatchInfoPopup's body meant it re-ran on every mouse-move while hovering *any*
+    /// match, for *every* visible match, which was especially slow with auto-font on (family
+    /// lookups, not just system-font construction). Scaled to the actual on-screen size at
+    /// render time (a cheap multiply) via displayFontSize(_:in:).
+    @State private var fontSizes: [CGFloat] = []
+    /// Exact renderable name (PostScript name) for each match's matchedFont, resolved once
+    /// instead of on every render — see renderableFontName.
+    @State private var renderedFontNames: [String?] = []
     @State private var scanning = false
     @State private var failed = false
     @State private var hoverIndex: Int?
@@ -181,6 +192,9 @@ struct PreviewView: View {
             if let image {
                 Image(nsImage: image).resizable().scaledToFit()
                     .overlay(GeometryReader { geo in
+                        // Fitted sizes are cached at the image's native pixel scale (fontSizes);
+                        // this is the cheap per-frame conversion to on-screen points.
+                        let scale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1
                         ZStack(alignment: .topLeading) {
                             ForEach(Array((show ? matches : []).enumerated()), id: \.offset) { i, m in
                                 let w = m.rect.width * geo.size.width + 4
@@ -191,7 +205,9 @@ struct PreviewView: View {
                                           sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: bg,
                                           autoBackground: autoBg,
                                           matchedFont: matchedFonts.indices.contains(i) ? matchedFonts[i] : nil,
-                                          autoFont: autoFont)
+                                          autoFont: autoFont,
+                                          fontSize: displayFontSize(i, scale: scale),
+                                          renderedFontName: renderedFontNames.indices.contains(i) ? renderedFontNames[i] : nil)
                                     .position(x: m.rect.midX * geo.size.width,
                                               y: (1 - m.rect.midY) * geo.size.height)
                                     .onContinuousHover(coordinateSpace: .named("preview")) { phase in
@@ -209,8 +225,7 @@ struct PreviewView: View {
                                 MatchInfoPopup(text: m.text, mode: mode,
                                                count: matches.filter { $0.text.caseInsensitiveCompare(m.text) == .orderedSame }.count,
                                                boxSize: CGSize(width: w, height: h),
-                                               fontSize: effectiveFontSize(for: m.text, weight: HL.fontWeight(weight), design: HL.fontDesign(design),
-                                                                            matchedFamily: mf, autoFont: autoFont, fitting: CGSize(width: w, height: h)),
+                                               fontSize: displayFontSize(i, scale: scale),
                                                design: design, weight: weight,
                                                boxColor: box, textColor: txt,
                                                bgColor: (autoBg ? (bgColors.indices.contains(i) ? bgColors[i] : nil) : nil) ?? bg,
@@ -245,23 +260,15 @@ struct PreviewView: View {
             Button { showStylePopover = true } label: { Image(systemName: "paintpalette") }
                 .help("Overlay style")
                 .popover(isPresented: $showStylePopover, arrowEdge: .bottom) {
-                    // While Auto is on, show (read-only) whatever color is actually behind the
-                    // hovered match right now, instead of the unrelated stored fallback — so the
-                    // swatch never shows something different from what's on the image.
-                    let liveBg: Color = autoBg
-                        ? ((hoverIndex.flatMap { bgColors.indices.contains($0) ? bgColors[$0] : nil }) ?? bg)
-                        : bg
+                    let bgBinding = Binding<Color>(get: { bg }, set: { bgHex = $0.hexString })
                     VStack(alignment: .leading, spacing: 10) {
                         if mode == "text" {
                             HStack {
                                 ColorPicker("Font", selection: txtBinding, supportsOpacity: false)
-                                ColorPicker("Background", selection: Binding<Color>(get: { liveBg }, set: { bgHex = $0.hexString }),
-                                             supportsOpacity: false).disabled(autoBg)
-                                    .help(autoBg ? "Showing the color currently sampled from the image (hover a match). Turn off \"Auto\" to pick one yourself."
-                                                 : "Used behind every redrawn word")
+                                ColorPicker("Background", selection: bgBinding, supportsOpacity: false)
                             }
                             Toggle("Match image color automatically", isOn: $autoBg)
-                                .help("Pick up the color immediately around each match and use it as its background")
+                                .help("Pick up the color immediately around each match and use it as its background; the Background color above is the fallback")
                             Toggle("Auto-match an installed font", isOn: $autoFont)
                                 .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font), instead of the Font chosen in Settings")
                         } else {
@@ -279,8 +286,7 @@ struct PreviewView: View {
         .task(id: path) {
             image = NSImage(contentsOfFile: path)
             failed = image == nil
-            bgColors = []
-            matchedFonts = []
+            bgColors = []; matchedFonts = []; fontSizes = []; renderedFontNames = []; pixelSize = .zero
             let terms = searchTerms(query, mode: searchMode)
             guard image != nil, !terms.isEmpty else { return }
             scanning = true
@@ -292,12 +298,21 @@ struct PreviewView: View {
             bgColors = await Task.detached(priority: .userInitiated) {
                 sampledBackgroundColors(at: p, rects: rects)
             }.value
+            pixelSize = await Task.detached(priority: .userInitiated) { imagePixelSize(at: p) ?? .zero }.value
             if autoFont { await detectFonts() }
+            await recomputeFontSizes()
+            recomputeRenderedFontNames()
             scanning = false
         }
         .onChange(of: autoFont) { on in
-            if on && matchedFonts.isEmpty { Task { await detectFonts() } }
+            Task {
+                if on && matchedFonts.isEmpty { await detectFonts() }
+                await recomputeFontSizes()
+                recomputeRenderedFontNames()
+            }
         }
+        .onChange(of: design) { _ in Task { await recomputeFontSizes() } }
+        .onChange(of: weight) { _ in Task { await recomputeFontSizes(); recomputeRenderedFontNames() } }
     }
 
     /// Auto-matches each found match's text to the closest-looking installed font (see
@@ -318,6 +333,39 @@ struct PreviewView: View {
                                   from: families)
             }
         }.value
+    }
+
+    /// Cheap per-frame conversion of a match's cached native-pixel-scale font size (fontSizes,
+    /// see recomputeFontSizes) to on-screen points — a single multiply, safe to call on every
+    /// hover-move or resize instead of re-fitting from scratch.
+    private func displayFontSize(_ i: Int, scale: CGFloat) -> CGFloat {
+        (fontSizes.indices.contains(i) ? fontSizes[i] : 12) * scale
+    }
+
+    /// Fits each match's font size once, at the image's native pixel scale rather than the
+    /// current window size, so it only needs recomputing when the matches, matched fonts,
+    /// design or weight actually change — never on hover or window resize (the view just scales
+    /// the cached result at render time via `displayFontSize(_:scale:)`).
+    private func recomputeFontSizes() async {
+        guard !matches.isEmpty, pixelSize.width > 0, pixelSize.height > 0 else { fontSizes = []; return }
+        let items = matches.map { (text: $0.text, rect: $0.rect) }
+        let mf = matchedFonts
+        let af = autoFont, w = weight, d = design, px = pixelSize
+        fontSizes = await Task.detached(priority: .userInitiated) {
+            items.enumerated().map { i, it in
+                let box = CGSize(width: it.rect.width * px.width, height: it.rect.height * px.height)
+                let family = i < mf.count ? mf[i] : nil
+                return effectiveFontSize(for: it.text, weight: HL.fontWeight(w), design: HL.fontDesign(d),
+                                          matchedFamily: family, autoFont: af, fitting: box)
+            }
+        }.value
+    }
+
+    /// Resolves each matched family to its exact renderable (PostScript) name once, instead of
+    /// on every render — see renderableFontName.
+    private func recomputeRenderedFontNames() {
+        let bold = weight == "bold"
+        renderedFontNames = matchedFonts.map { $0.map { renderableFontName(family: $0, bold: bold) } }
     }
 }
 
