@@ -24,16 +24,27 @@ func registerBundledFonts() {
     }
 }
 
-/// Installed font family names usable as text-overlay match candidates. Excludes only Apple's
-/// hidden internal pseudo-families (dot-prefixed, e.g. ".AppleSystemUIFont"), which aren't real,
-/// renderable fonts. San Francisco is left in the running — see bestMatchingFont, which swaps it
-/// (and anything else that reads as a system font) out for a fixed replacement afterward, since
-/// excluding it from the search here just made the matcher settle on an equally system-looking
-/// lookalike (Helvetica Neue, etc.) instead.
+/// Installed font family names usable as text-overlay match candidates. Excludes Apple's hidden
+/// internal pseudo-families (dot-prefixed, e.g. ".AppleSystemUIFont"), which aren't real,
+/// renderable fonts, and monospace families (Monaco, Menlo, Courier, SF Mono, ...). San
+/// Francisco itself is left in the running — see bestMatchingFont, which swaps it (and anything
+/// else that reads as a system font) out for a fixed replacement afterward, since excluding it
+/// from the search here just made the matcher settle on an equally system-looking lookalike
+/// (Helvetica Neue, etc.) instead. Monospace is excluded outright rather than substituted after
+/// the fact: screenshot/UI text is essentially never actually monospaced, and the matcher only
+/// compares aggregate rendered width at a given height — a monospace font's uniform per-glyph
+/// width can coincidentally land close to that for a short string even though every letterform
+/// looks completely different, so letting it compete produces a wrong "best match" outright
+/// rather than a merely-too-generic one.
 func candidateFontFamilies() -> [String] {
     NSFontManager.shared.availableFontFamilies
-        .filter { !$0.hasPrefix(".") }
+        .filter { !$0.hasPrefix(".") && !isMonospace($0) }
         .sorted()
+}
+
+private func isMonospace(_ family: String) -> Bool {
+    NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: 12)?
+        .fontDescriptor.symbolicTraits.contains(.monoSpace) ?? false
 }
 
 /// The font substituted in whenever the best match turns out to be a system font. Noto Sans is
