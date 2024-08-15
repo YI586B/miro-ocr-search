@@ -62,11 +62,27 @@ private func nsFont(family: String, bold: Bool, size: CGFloat) -> NSFont? {
     NSFontManager.shared.font(withFamily: family, traits: bold ? .boldFontMask : [], weight: 5, size: size)
 }
 
+/// True if `font` has an actual glyph for every character in `text`. AppKit's width measurement
+/// (NSString.size(withAttributes:)) still returns a plausible-looking number even when the font
+/// can't render the text at all — CoreText silently substitutes a fallback font's metrics for
+/// any glyph it's missing — so without this check, a font for a completely different script
+/// (e.g. Raanana, a Hebrew-only system font with zero Latin coverage) can "win" the width race
+/// for ordinary Latin text purely by the fallback font's coincidental metrics, despite being
+/// unable to draw a single character of it.
+private func supportsCharacters(in text: String, font: NSFont) -> Bool {
+    let cs = CTFontCopyCharacterSet(font as CTFont)
+    for scalar in text.unicodeScalars {
+        guard let ch = unichar(exactly: scalar.value) else { continue }   // astral-plane char: skip, rare in UI text
+        if !CFCharacterSetIsCharacterMember(cs, ch) { return false }
+    }
+    return true
+}
+
 /// Largest size at which `family` fits `text` inside `box` (both width and height), and the
 /// resulting measured width — mirrors fittedFontSize(for:weight:design:fitting:) but for a named
 /// installed font instead of one of the four built-in system designs.
 private func fit(text: String, family: String, bold: Bool, box: CGSize) -> (size: CGFloat, width: CGFloat)? {
-    guard nsFont(family: family, bold: bold, size: 12) != nil else { return nil }
+    guard let base = nsFont(family: family, bold: bold, size: 12), supportsCharacters(in: text, font: base) else { return nil }
     func measure(_ size: CGFloat) -> CGSize? {
         guard let f = nsFont(family: family, bold: bold, size: size) else { return nil }
         return (text as NSString).size(withAttributes: [.font: f])
