@@ -24,22 +24,29 @@ func registerBundledFonts() {
     }
 }
 
-/// Installed font family names usable as text-overlay match candidates. Excludes Apple's hidden
-/// internal pseudo-families (dot-prefixed, e.g. ".AppleSystemUIFont"), which aren't real,
-/// renderable fonts, and monospace families (Monaco, Menlo, Courier, SF Mono, ...). San
-/// Francisco itself is left in the running — see bestMatchingFont, which swaps it (and anything
-/// else that reads as a system font) out for a fixed replacement afterward, since excluding it
-/// from the search here just made the matcher settle on an equally system-looking lookalike
-/// (Helvetica Neue, etc.) instead. Monospace is excluded outright rather than substituted after
-/// the fact: screenshot/UI text is essentially never actually monospaced, and the matcher only
-/// compares aggregate rendered width at a given height — a monospace font's uniform per-glyph
-/// width can coincidentally land close to that for a short string even though every letterform
-/// looks completely different, so letting it compete produces a wrong "best match" outright
-/// rather than a merely-too-generic one.
+/// Common, general-purpose Latin body-text/UI font families to consider as auto-font matches.
+/// Searching the *entire* installed catalog (any of ~190 families on a typical Mac, including
+/// CJK fonts with Latin fallback glyphs, math/symbol fonts, and novelty/decorative faces) let a
+/// completely inappropriate font coincidentally win the width comparison for some snippet — a
+/// single scalar (rendered width) has very little discriminating power among that many wildly
+/// different candidates. Restricting the search to fonts actually meant for reading body text
+/// fixed that in testing; monospace and script/symbol-only families are excluded either way
+/// (isMonospace, supportsCharacters) as a second safety net.
+private let curatedFontFamilies = [
+    "SF Pro", "SF Pro Text", "SF Pro Display", "SF Pro Rounded",
+    "SF Compact", "SF Compact Text", "SF Compact Display", "SF Compact Rounded",
+    "Helvetica Neue", "Helvetica", "Arial", "Arial Rounded MT Bold",
+    "Avenir", "Avenir Next", "Avenir Next Condensed", "Futura", "Gill Sans", "Optima",
+    "Verdana", "Tahoma", "Trebuchet MS",
+    "Georgia", "Times New Roman", "Palatino", "Baskerville",
+    "American Typewriter", "Charter", "Hoefler Text", "Big Caslon", "Cochin",
+    "Didot", "Bodoni 72", "Noto Sans",
+]
+
+/// The curated families actually present (and not monospace) on the machine running the app.
 func candidateFontFamilies() -> [String] {
-    NSFontManager.shared.availableFontFamilies
-        .filter { !$0.hasPrefix(".") && !isMonospace($0) }
-        .sorted()
+    let available = Set(NSFontManager.shared.availableFontFamilies)
+    return curatedFontFamilies.filter { available.contains($0) && !isMonospace($0) }
 }
 
 private func isMonospace(_ family: String) -> Bool {
@@ -98,30 +105,56 @@ private func fit(text: String, family: String, bold: Bool, box: CGSize) -> (size
     return (bestSize, bestWidth)
 }
 
-/// Best-guess installed font family for a match's text: the candidate whose rendered width, at a
-/// size fit to the box's height, comes closest to the box's actual width. A fast, real-metric
-/// proxy for "looks like this" — character proportions (condensed/wide, tight/loose spacing)
-/// vary enough between families that width-at-matched-height is a decent visual-similarity
-/// signal without full pixel-level font recognition.
+/// How much worse the best system-font candidate's average error is allowed to be than the
+/// outright winner's, and still count as "the image is basically system-font text" — see
+/// bestMatchingFont(forImage:). Tuned against real screenshots: San Francisco is very often not
+/// literally the #1 candidate by width alone (other fonts can measure numerically closer without
+/// actually looking like a match — a wide, loosely-spaced font like Verdana can coincidentally
+/// absorb the gap between Vision's OCR boxes and true glyph width better than SF's tighter
+/// spacing, image-wide, without genuinely resembling it), but it should still rank competitively
+/// close when the text really is set in it.
+private let systemFontTolerance = 2.5
+
+/// Best-guess installed font family for a whole image's worth of matches, not judged one string
+/// at a time: for each candidate, average its *relative* width error (measured/actual width,
+/// fit to each match's box height) across every match, trying both regular and bold per match
+/// and keeping whichever measures closer (screenshot text mixes weights — headers vs. body —
+/// that a single global weight assumption would otherwise measure against incorrectly). A font
+/// that's only coincidentally close for one string won't stay close across many different ones,
+/// which judging each match independently was vulnerable to.
 ///
-/// Screenshot text is usually already set in the system font, so the metrically closest
-/// candidate is often San Francisco itself, or a lookalike (Helvetica Neue, etc.) that measures
-/// almost the same — either way it still just reads as "the system font" once drawn. If the
-/// winner is a system font, swap it for systemFontReplacement instead of returning it as-is.
-func bestMatchingFont(for text: String, bold: Bool, fitting box: CGSize,
+/// San Francisco often isn't the literal lowest-error candidate (see systemFontTolerance above),
+/// so rather than requiring it to outright win, substitute systemFontReplacement whenever the
+/// best system-font candidate's error is within `systemFontTolerance` of the true winner's.
+func bestMatchingFont(forImage items: [(text: String, rect: CGRect)], pixelSize: CGSize,
                        from families: [String] = candidateFontFamilies()) -> String? {
-    guard !text.isEmpty, box.width > 1, box.height > 1, !families.isEmpty else { return nil }
-    var best: (family: String, diff: CGFloat)?
-    for family in families {
-        guard let (_, width) = fit(text: text, family: family, bold: bold, box: box) else { continue }
-        let diff = abs(width - box.width)
-        if best == nil || diff < best!.diff { best = (family, diff) }
+    let usable = items.filter { $0.text.count > 1 }   // single characters barely constrain width
+    guard !usable.isEmpty, pixelSize.width > 0, pixelSize.height > 0, !families.isEmpty else { return nil }
+
+    func averageRelativeError(_ family: String) -> Double? {
+        guard let probe = nsFont(family: family, bold: false, size: 12),
+              usable.allSatisfy({ supportsCharacters(in: $0.text, font: probe) }) else { return nil }
+        var total = 0.0, n = 0
+        for it in usable {
+            let box = CGSize(width: it.rect.width * pixelSize.width, height: it.rect.height * pixelSize.height)
+            guard box.width > 1, box.height > 1 else { continue }
+            let widths = [fit(text: it.text, family: family, bold: false, box: box)?.width,
+                          fit(text: it.text, family: family, bold: true, box: box)?.width].compactMap { $0 }
+            guard let width = widths.min(by: { abs($0 - box.width) < abs($1 - box.width) }) else { continue }
+            total += Double(abs(width - box.width)) / Double(box.width)
+            n += 1
+        }
+        return n > 0 ? total / Double(n) : nil
     }
-    guard let chosen = best?.family else { return nil }
-    if isSystemFont(chosen), NSFontManager.shared.availableFontFamilies.contains(systemFontReplacement) {
+
+    let scored = families.compactMap { family in averageRelativeError(family).map { (family, $0) } }
+    guard let winner = scored.min(by: { $0.1 < $1.1 }) else { return nil }
+    if let sfBest = scored.filter({ isSystemFont($0.0) }).min(by: { $0.1 < $1.1 }),
+       sfBest.1 <= winner.1 * systemFontTolerance,
+       NSFontManager.shared.availableFontFamilies.contains(systemFontReplacement) {
         return systemFontReplacement
     }
-    return chosen
+    return winner.0
 }
 
 /// The font size MatchView actually renders a match's text at: fit to the auto-matched family

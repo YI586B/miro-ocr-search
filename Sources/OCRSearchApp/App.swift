@@ -315,24 +315,21 @@ struct PreviewView: View {
         .onChange(of: weight) { _ in Task { await recomputeFontSizes(); recomputeRenderedFontNames() } }
     }
 
-    /// Auto-matches each found match's text to the closest-looking installed font (see
-    /// bestMatchingFont), excluding Apple's system/SF fonts. Skipped unless auto-font is on, or
-    /// asked for explicitly, since scanning every installed family is real work — only worth
-    /// paying for when the feature is actually in use.
+    /// Auto-matches the whole image's text to one closest-looking installed font at once (see
+    /// bestMatchingFont(forImage:)), rather than judging each match independently — a screenshot
+    /// is essentially always set in a single consistent font throughout, and scoring across every
+    /// match instead of one string at a time is what makes the system-font check reliable.
+    /// Skipped unless auto-font is on, since scanning every candidate family is real work — only
+    /// worth paying for when the feature is actually in use.
     private func detectFonts() async {
-        guard !matches.isEmpty else { return }
-        let p = path
+        guard !matches.isEmpty, pixelSize.width > 0, pixelSize.height > 0 else { return }
         let items = matches.map { (text: $0.text, rect: $0.rect) }
         let families = candidateFontFamilies()
-        let bold = weight == "bold"
-        matchedFonts = await Task.detached(priority: .userInitiated) {
-            guard let px = imagePixelSize(at: p) else { return Array(repeating: nil, count: items.count) }
-            return items.map {
-                bestMatchingFont(for: $0.text, bold: bold,
-                                  fitting: CGSize(width: $0.rect.width * px.width, height: $0.rect.height * px.height),
-                                  from: families)
-            }
+        let px = pixelSize
+        let winner = await Task.detached(priority: .userInitiated) {
+            bestMatchingFont(forImage: items, pixelSize: px, from: families)
         }.value
+        matchedFonts = Array(repeating: winner, count: matches.count)
     }
 
     /// Cheap per-frame conversion of a match's cached native-pixel-scale font size (fontSizes,
