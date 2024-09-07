@@ -27,6 +27,26 @@ public struct TextMatch: Sendable {
     public let text: String   // the text as recognised on the image
 }
 
+/// Every recognized line's full bounding box, regardless of search terms — unlike findMatches,
+/// which only returns boxes for the substrings that matched a search. Meant for callers that
+/// need a representative sample of everything on the page (e.g. auto font-matching, which needs
+/// many data points to be reliable — scoring against just the handful of substrings a search
+/// happened to match is too few to average out per-string noise).
+public func allTextBoxes(at url: URL) throws -> [TextMatch] {
+    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { throw OCRError.unreadable(url) }
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.usesLanguageCorrection = true
+    request.recognitionLanguages = ["en-US", "nl-NL"]
+    try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+    return (request.results ?? []).compactMap { obs in
+        guard let cand = obs.topCandidates(1).first, !cand.string.isEmpty,
+              let box = try? cand.boundingBox(for: cand.string.startIndex..<cand.string.endIndex) else { return nil }
+        return TextMatch(rect: box.boundingBox, text: cand.string)
+    }
+}
+
 public func findMatches(at url: URL, terms: [String]) throws -> [TextMatch] {
     guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
           let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { throw OCRError.unreadable(url) }

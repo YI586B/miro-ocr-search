@@ -317,17 +317,26 @@ struct PreviewView: View {
 
     /// Auto-matches the whole image's text to one closest-looking installed font at once (see
     /// bestMatchingFont(forImage:)), rather than judging each match independently — a screenshot
-    /// is essentially always set in a single consistent font throughout, and scoring across every
-    /// match instead of one string at a time is what makes the system-font check reliable.
+    /// is essentially always set in a single consistent font throughout, and scoring across many
+    /// data points instead of one string at a time is what makes the system-font check reliable.
+    /// Scores against *every* line on the page (allTextBoxes), not just `matches` — matches is
+    /// filtered down to whatever the search happened to find, which for a specific search term
+    /// can be a single short phrase, too few data points for aggregation to do any good (this
+    /// was confirmed to be exactly why "New Relic" alone landed on the wrong font: with only that
+    /// one string to score, it's back to the same single-string-coincidence problem aggregation
+    /// was meant to fix). The overlay still only highlights `matches`, as before — this only
+    /// changes what font-detection itself is scored against.
     /// Skipped unless auto-font is on, since scanning every candidate family is real work — only
     /// worth paying for when the feature is actually in use.
     private func detectFonts() async {
         guard !matches.isEmpty, pixelSize.width > 0, pixelSize.height > 0 else { return }
-        let items = matches.map { (text: $0.text, rect: $0.rect) }
         let families = candidateFontFamilies()
         let px = pixelSize
+        let p = path
         let winner = await Task.detached(priority: .userInitiated) {
-            bestMatchingFont(forImage: items, pixelSize: px, from: families)
+            let all = (try? allTextBoxes(at: URL(fileURLWithPath: p))) ?? []
+            let items = all.map { (text: $0.text, rect: $0.rect) }
+            return bestMatchingFont(forImage: items, pixelSize: px, from: families)
         }.value
         matchedFonts = Array(repeating: winner, count: matches.count)
     }
