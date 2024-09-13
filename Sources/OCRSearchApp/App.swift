@@ -103,6 +103,62 @@ func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
     return rects.map(sample)
 }
 
+/// Approximate the color of the text itself within each match box, for text-overlay mode to draw
+/// the redrawn word in — rather than always using the manually picked Font color. Samples a grid
+/// of points inside the box, first finding the box's background reference the same way
+/// sampledBackgroundColors does (its edge midpoints, just outside the box), then averaging
+/// whichever interior samples differ *most* from that background — those are the ones most
+/// likely to have landed on actual glyph ink rather than background showing through between or
+/// around the letters. Falls back to `nil` if the image can't be read as a bitmap, or nothing
+/// inside the box stands out from its background at all (e.g. blank space).
+func sampledTextColors(at path: String, rects: [CGRect]) -> [Color?] {
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return Array(repeating: nil, count: rects.count) }
+    let rep = NSBitmapImageRep(cgImage: cg)
+    let w = rep.pixelsWide, h = rep.pixelsHigh
+    guard w > 0, h > 0 else { return Array(repeating: nil, count: rects.count) }
+    func colorAt(_ nx: CGFloat, _ ny: CGFloat) -> NSColor? {
+        let px = min(max(Int(nx * CGFloat(w)), 0), w - 1)
+        let py = min(max(Int(ny * CGFloat(h)), 0), h - 1)
+        return rep.colorAt(x: px, y: py)?.usingColorSpace(.sRGB)
+    }
+    func sample(_ rect: CGRect) -> Color? {
+        // Vision rects are normalised with origin bottom-left; bitmap pixel rows run top-down.
+        let x0 = rect.minX, x1 = rect.maxX
+        let yTop = 1 - rect.maxY, yBottom = 1 - rect.minY
+        let midX = (x0 + x1) / 2, midY = (yTop + yBottom) / 2
+        let marginX = max((x1 - x0) * 0.15, 2 / CGFloat(w)), marginY = max((yBottom - yTop) * 0.15, 2 / CGFloat(h))
+        let bg = [colorAt(midX, yTop - marginY), colorAt(midX, yBottom + marginY),
+                  colorAt(x0 - marginX, midY), colorAt(x1 + marginX, midY)].compactMap { $0 }
+        guard !bg.isEmpty else { return nil }
+        let bgR = bg.map(\.redComponent).reduce(0, +) / CGFloat(bg.count)
+        let bgG = bg.map(\.greenComponent).reduce(0, +) / CGFloat(bg.count)
+        let bgB = bg.map(\.blueComponent).reduce(0, +) / CGFloat(bg.count)
+
+        var candidates: [(color: NSColor, distance: CGFloat)] = []
+        let steps = 7
+        for iy in 1..<steps {
+            for ix in 1..<steps {
+                let nx = x0 + (x1 - x0) * CGFloat(ix) / CGFloat(steps)
+                let ny = yTop + (yBottom - yTop) * CGFloat(iy) / CGFloat(steps)
+                guard let c = colorAt(nx, ny) else { continue }
+                let d = (c.redComponent - bgR) * (c.redComponent - bgR)
+                    + (c.greenComponent - bgG) * (c.greenComponent - bgG)
+                    + (c.blueComponent - bgB) * (c.blueComponent - bgB)
+                candidates.append((c, d))
+            }
+        }
+        candidates.sort { $0.distance > $1.distance }
+        let ink = candidates.prefix(max(1, candidates.count / 4))   // top quartile: likely glyph pixels
+        guard let top = ink.first, top.distance > 0.001 else { return nil }   // nothing stood out
+        let r = ink.map { $0.color.redComponent }.reduce(0, +) / CGFloat(ink.count)
+        let g = ink.map { $0.color.greenComponent }.reduce(0, +) / CGFloat(ink.count)
+        let b = ink.map { $0.color.blueComponent }.reduce(0, +) / CGFloat(ink.count)
+        return Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
+    }
+    return rects.map(sample)
+}
+
 /// Query -> the term(s) to look for on the image (drops quotes, operators, wildcards). In
 /// `.phrase` mode the whole query is kept together as one term, so only that contiguous phrase
 /// gets highlighted; in `.words` mode each word is highlighted separately, wherever it appears.
@@ -153,6 +209,7 @@ struct PreviewView: View {
     @State private var image: NSImage?
     @State private var matches: [TextMatch] = []
     @State private var bgColors: [Color?] = []
+    @State private var textColors: [Color?] = []
     @State private var matchedFonts: [String?] = []
     @State private var pixelSize: CGSize = .zero
     /// Fitted font size per match, computed once at the image's native pixel scale rather than
@@ -176,6 +233,7 @@ struct PreviewView: View {
     @AppStorage(HL.opacity) private var opacity = 0.35
     @AppStorage(HL.outline) private var outline = true
     @AppStorage(HL.textHex) private var textHex = HL.defaultText
+    @AppStorage(HL.autoTextColor) private var autoTextColor = true
     @AppStorage(HL.bgHex) private var bgHex = HL.defaultBg
     @AppStorage(HL.autoBg) private var autoBg = true
     @AppStorage(HL.design) private var design = "default"
@@ -207,7 +265,9 @@ struct PreviewView: View {
                                           matchedFont: matchedFonts.indices.contains(i) ? matchedFonts[i] : nil,
                                           autoFont: autoFont,
                                           fontSize: displayFontSize(i, scale: scale),
-                                          renderedFontName: renderedFontNames.indices.contains(i) ? renderedFontNames[i] : nil)
+                                          renderedFontName: renderedFontNames.indices.contains(i) ? renderedFontNames[i] : nil,
+                                          sampledTextColor: textColors.indices.contains(i) ? textColors[i] : nil,
+                                          autoTextColor: autoTextColor)
                                     .position(x: m.rect.midX * geo.size.width,
                                               y: (1 - m.rect.midY) * geo.size.height)
                                     .onContinuousHover(coordinateSpace: .named("preview")) { phase in
@@ -227,7 +287,8 @@ struct PreviewView: View {
                                                boxSize: CGSize(width: w, height: h),
                                                fontSize: displayFontSize(i, scale: scale),
                                                design: design, weight: weight,
-                                               boxColor: box, textColor: txt,
+                                               boxColor: box,
+                                               textColor: (autoTextColor ? (textColors.indices.contains(i) ? textColors[i] : nil) : nil) ?? txt,
                                                bgColor: (autoBg ? (bgColors.indices.contains(i) ? bgColors[i] : nil) : nil) ?? bg,
                                                opacity: opacity, matchedFont: mf, autoFont: autoFont)
                                     .allowsHitTesting(false)   // never steals hover from the match it describes
@@ -267,7 +328,9 @@ struct PreviewView: View {
                                 ColorPicker("Font", selection: txtBinding, supportsOpacity: false)
                                 ColorPicker("Background", selection: bgBinding, supportsOpacity: false)
                             }
-                            Toggle("Match image color automatically", isOn: $autoBg)
+                            Toggle("Match text's own color automatically", isOn: $autoTextColor)
+                                .help("Pick up the text's own ink color from the image and use it for the redrawn word; the Font color above is the fallback")
+                            Toggle("Match background color automatically", isOn: $autoBg)
                                 .help("Pick up the color immediately around each match and use it as its background; the Background color above is the fallback")
                             Toggle("Auto-match an installed font", isOn: $autoFont)
                                 .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font), instead of the Font chosen in Settings")
@@ -286,7 +349,7 @@ struct PreviewView: View {
         .task(id: path) {
             image = NSImage(contentsOfFile: path)
             failed = image == nil
-            bgColors = []; matchedFonts = []; fontSizes = []; renderedFontNames = []; pixelSize = .zero
+            bgColors = []; textColors = []; matchedFonts = []; fontSizes = []; renderedFontNames = []; pixelSize = .zero
             let terms = searchTerms(query, mode: searchMode)
             guard image != nil, !terms.isEmpty else { return }
             scanning = true
@@ -297,6 +360,9 @@ struct PreviewView: View {
             let rects = matches.map(\.rect)
             bgColors = await Task.detached(priority: .userInitiated) {
                 sampledBackgroundColors(at: p, rects: rects)
+            }.value
+            textColors = await Task.detached(priority: .userInitiated) {
+                sampledTextColors(at: p, rects: rects)
             }.value
             pixelSize = await Task.detached(priority: .userInitiated) { imagePixelSize(at: p) ?? .zero }.value
             if autoFont { await detectFonts() }

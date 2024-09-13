@@ -23,6 +23,7 @@ enum HL {
     static let opacity = "highlightOpacity"
     static let outline = "highlightOutline"
     static let textHex = "highlightTextHex"
+    static let autoTextColor = "highlightAutoTextColor"  // sample the text's own ink color from the image instead of using textHex
     static let bgHex = "highlightBgHex"          // text-mode background, when auto-match is off or sampling fails
     static let autoBg = "highlightAutoBg"        // sample the background from the image instead of using bgHex
     static let design = "highlightFontDesign"    // default | rounded | serif | monospaced
@@ -101,12 +102,18 @@ struct MatchView: View {
     /// Precomputed exact renderable name (PostScript name) for matchedFont, see
     /// renderableFontName -- resolving it here on every render was the same kind of hot-path cost.
     var renderedFontName: String? = nil
+    /// Color sampled from the text's own ink within this match, used when `autoTextColor` is on
+    /// and sampling found something. Otherwise falls back to `textColor`, the user-picked color
+    /// -- mirrors `sampled`/`autoBackground` above exactly, for the same reason.
+    var sampledTextColor: Color? = nil
+    var autoTextColor: Bool = true
 
     var body: some View {
         Group {
             if mode == "text" {
                 let w = HL.fontWeight(weight), d = HL.fontDesign(design)
                 let useMatch = autoFont && renderedFontName != nil
+                let effectiveTextColor = (autoTextColor ? sampledTextColor : nil) ?? textColor
                 ZStack {
                     Rectangle().fill((autoBackground ? sampled : nil) ?? background)
                     Group {
@@ -115,7 +122,7 @@ struct MatchView: View {
                         }
                         else { Text(text).font(.system(size: fontSize, weight: w, design: d)) }
                     }
-                    .foregroundStyle(textColor)
+                    .foregroundStyle(effectiveTextColor)
                     .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
                 }
                 .frame(width: size.width, height: size.height)
@@ -196,6 +203,7 @@ struct SettingsView: View {
     @AppStorage(HL.opacity) private var opacity = 0.35
     @AppStorage(HL.outline) private var outline = true
     @AppStorage(HL.textHex) private var textHex = HL.defaultText
+    @AppStorage(HL.autoTextColor) private var autoTextColor = true
     @AppStorage(HL.bgHex) private var bgHex = HL.defaultBg
     @AppStorage(HL.autoBg) private var autoBg = true
     @AppStorage(HL.design) private var design = "default"
@@ -226,9 +234,10 @@ struct SettingsView: View {
             Section("Text overlay") {
                 HStack {
                     ColorPicker("Font color", selection: txt, supportsOpacity: false)
-                    ColorPicker("Background", selection: bg, supportsOpacity: false).disabled(autoBg)
+                    ColorPicker("Background", selection: bg, supportsOpacity: false)
                 }
-                Toggle("Match image color automatically", isOn: $autoBg)
+                Toggle("Match text's own color automatically", isOn: $autoTextColor)
+                Toggle("Match background color automatically", isOn: $autoBg)
                 Picker("Font", selection: $design) {
                     Text("System").tag("default"); Text("Rounded").tag("rounded")
                     Text("Serif").tag("serif"); Text("Monospaced").tag("monospaced")
@@ -237,9 +246,13 @@ struct SettingsView: View {
                     Text("Regular").tag("regular"); Text("Medium").tag("medium"); Text("Bold").tag("bold")
                 }
                 Toggle("Auto-match an installed font", isOn: $autoFont)
+                Text(autoTextColor
+                     ? "Matched words are re-drawn in their own detected ink color, sized and fonted to closely match the original text. The Font color above is only a fallback, used if sampling isn't possible."
+                     : "Matched words are re-drawn in the Font color above, everywhere.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text(autoBg
-                     ? "Matched words are re-drawn in this font and color, over a background patch sampled from the image around them (so they cover the original text). The Background swatch above is only a fallback, used if sampling isn't possible — turn this off to use it everywhere instead."
-                     : "Matched words are re-drawn over the Background color above, everywhere.")
+                     ? "They're drawn over a background patch sampled from the image around them (so they cover the original text). The Background swatch above is only a fallback — turn this off to use it everywhere instead."
+                     : "They're drawn over the Background color above, everywhere.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(autoFont
                      ? "Instead of the Font above, each match is redrawn in whichever installed font best matches its size and proportions — or in \(systemFontReplacement) if that turns out to be the system font."
@@ -263,7 +276,7 @@ struct SettingsView: View {
 
             Button("Reset") {
                 show = true; mode = "box"; boxHex = HL.defaultBox; opacity = 0.35; outline = true
-                textHex = HL.defaultText; bgHex = HL.defaultBg; autoBg = true
+                textHex = HL.defaultText; autoTextColor = true; bgHex = HL.defaultBg; autoBg = true
                 design = "default"; weight = "regular"; autoFont = false
             }
         }

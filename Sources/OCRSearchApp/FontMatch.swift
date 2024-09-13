@@ -157,12 +157,31 @@ func bestMatchingFont(forImage items: [(text: String, rect: CGRect)], pixelSize:
     return winner.0
 }
 
+/// Largest size at which `family` fits `text` inside *both* dimensions of `box` — the actual
+/// on-screen render size. Unlike `fit()` above (which only constrains height, deliberately, so
+/// it can measure a candidate's natural width against the target for scoring), rendering needs
+/// to fit the box the same way fittedFontSize(for:weight:design:fitting:) already does for the
+/// manual/design path — using `fit()`'s height-only result here was why auto-font text came out
+/// noticeably too large (or too small once minimumScaleFactor kicked in to compensate).
+private func fitBoth(text: String, family: String, bold: Bool, box: CGSize) -> CGFloat {
+    guard let base = nsFont(family: family, bold: bold, size: 12), supportsCharacters(in: text, font: base) else { return 4 }
+    func fits(_ size: CGFloat) -> Bool {
+        guard let f = nsFont(family: family, bold: bold, size: size) else { return false }
+        let m = (text as NSString).size(withAttributes: [.font: f])
+        return m.width <= box.width && m.height <= box.height
+    }
+    var lo: CGFloat = 1, hi = box.height * 1.4
+    guard fits(lo) else { return lo }
+    for _ in 0..<12 { let mid = (lo + hi) / 2; if fits(mid) { lo = mid } else { hi = mid } }
+    return max(lo, 4)
+}
+
 /// The font size MatchView actually renders a match's text at: fit to the auto-matched family
 /// when auto-font is on and a match was found, otherwise fit to the manually chosen design.
 func effectiveFontSize(for text: String, weight: Font.Weight, design: Font.Design,
                         matchedFamily: String?, autoFont: Bool, fitting box: CGSize) -> CGFloat {
     if autoFont, let family = matchedFamily {
-        return fit(text: text, family: family, bold: weight == .bold, box: box)?.size ?? 4
+        return fitBoth(text: text, family: family, bold: weight == .bold, box: box)
     }
     return fittedFontSize(for: text, weight: weight, design: design, fitting: box)
 }
