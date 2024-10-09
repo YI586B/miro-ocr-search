@@ -131,9 +131,14 @@ func bestMatchingFont(forImage items: [(text: String, rect: CGRect)], pixelSize:
     let usable = items.filter { $0.text.count > 1 }   // single characters barely constrain width
     guard !usable.isEmpty, pixelSize.width > 0, pixelSize.height > 0, !families.isEmpty else { return nil }
 
+    // Whether a family can be scored at all against every line on the page (used below); the
+    // per-line character-coverage check inside fit() already skips lines it can't render, so
+    // this only needs to confirm the family exists, not that it covers everything — requiring
+    // that would disqualify the whole family over a single exotic character anywhere on the page
+    // (a bullet, a chevron, an emoji — all common in real screenshots), which was silently
+    // emptying `scored` entirely and made auto-font fall back to the manual Font/Weight design.
     func averageRelativeError(_ family: String) -> Double? {
-        guard let probe = nsFont(family: family, bold: false, size: 12),
-              usable.allSatisfy({ supportsCharacters(in: $0.text, font: probe) }) else { return nil }
+        guard nsFont(family: family, bold: false, size: 12) != nil else { return nil }
         var total = 0.0, n = 0
         for it in usable {
             let box = CGSize(width: it.rect.width * pixelSize.width, height: it.rect.height * pixelSize.height)
@@ -160,20 +165,23 @@ func bestMatchingFont(forImage items: [(text: String, rect: CGRect)], pixelSize:
 /// Largest size at which `family` fits `text` inside *both* dimensions of `box` — the actual
 /// on-screen render size. Unlike `fit()` above (which only constrains height, deliberately, so
 /// it can measure a candidate's natural width against the target for scoring), rendering needs
-/// to fit the box the same way fittedFontSize(for:weight:design:fitting:) already does for the
-/// manual/design path — using `fit()`'s height-only result here was why auto-font text came out
-/// noticeably too large (or too small once minimumScaleFactor kicked in to compensate).
+/// to fit the box the same way fittedFontSize(for:weight:design:fitting:) does for the
+/// manual/design path: sized by cap height, not the font's full line-height metric. Different
+/// families carry wildly different amounts of built-in leading for the same visible glyph size
+/// (measured, Noto Sans's line height runs ~14% taller than SF's at the same point size, despite
+/// their cap heights being within 2% of each other) — fitting against the full line height, as
+/// this used to, systematically under-sized any family with generous default leading relative to
+/// what the original text actually looked like.
 private func fitBoth(text: String, family: String, bold: Bool, box: CGSize) -> CGFloat {
-    guard let base = nsFont(family: family, bold: bold, size: 12), supportsCharacters(in: text, font: base) else { return 4 }
-    func fits(_ size: CGFloat) -> Bool {
-        guard let f = nsFont(family: family, bold: bold, size: size) else { return false }
-        let m = (text as NSString).size(withAttributes: [.font: f])
-        return m.width <= box.width && m.height <= box.height
+    guard let base = nsFont(family: family, bold: bold, size: 100), supportsCharacters(in: text, font: base) else { return 4 }
+    let capRatio = base.capHeight / 100
+    guard capRatio > 0 else { return 4 }
+    var size = box.height / capRatio
+    if let f = nsFont(family: family, bold: bold, size: size) {
+        let width = (text as NSString).size(withAttributes: [.font: f]).width
+        if width > box.width, width > 0 { size *= box.width / width }
     }
-    var lo: CGFloat = 1, hi = box.height * 1.4
-    guard fits(lo) else { return lo }
-    for _ in 0..<12 { let mid = (lo + hi) / 2; if fits(mid) { lo = mid } else { hi = mid } }
-    return max(lo, 4)
+    return max(size, 4)
 }
 
 /// The font size MatchView actually renders a match's text at: fit to the auto-matched family

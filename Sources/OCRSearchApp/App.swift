@@ -371,8 +371,12 @@ struct PreviewView: View {
             scanning = false
         }
         .onChange(of: autoFont) { on in
+            // Always redetect on turning on, rather than only when matchedFonts is still empty:
+            // a prior attempt that legitimately found no match leaves it as a *non-empty* array
+            // of nils (one per match), which made the old empty-check skip ever retrying and got
+            // permanently stuck showing the manual Font/Weight fallback instead.
             Task {
-                if on && matchedFonts.isEmpty { await detectFonts() }
+                if on { await detectFonts() }
                 await recomputeFontSizes()
                 recomputeRenderedFontNames()
             }
