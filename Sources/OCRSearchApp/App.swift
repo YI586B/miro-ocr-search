@@ -59,12 +59,6 @@ struct PreviewRequest: Codable, Hashable {
     var mode: SearchMode = .phrase
 }
 
-/// Approximate the image's background color immediately around each match box, so text-overlay
-/// mode can paint the redrawn word over a same-colored patch instead of just floating on top of
-/// the original characters. Samples just outside the box on all four sides — at the midpoint of
-/// each edge, offset outward by a small margin so it lands past any anti-aliased glyph pixel,
-/// never inside the box itself — and averages them; falls back to `nil` (caller uses its own
-/// default) if the image can't be read as a bitmap.
 /// An image's pixel dimensions, read from its metadata without decoding the full bitmap.
 func imagePixelSize(at path: String) -> CGSize? {
     guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
@@ -74,6 +68,19 @@ func imagePixelSize(at path: String) -> CGSize? {
     return CGSize(width: w, height: h)
 }
 
+/// Approximate the image's background color immediately around each match box, so text-overlay
+/// mode can paint the redrawn word over a same-colored patch instead of just floating on top of
+/// the original characters. Samples just outside the box on all four sides — at the midpoint of
+/// each edge, offset outward by a small margin so it lands past any anti-aliased glyph pixel,
+/// never inside the box itself — and averages them; falls back to `nil` (caller uses its own
+/// default) if the image can't be read as a bitmap.
+///
+/// Deliberately does NOT call `.usingColorSpace(.sRGB)` on the sampled NSColor: colorAt(x:y:)
+/// returns components already tagged NSCalibratedRGBColorSpace that numerically match the raw
+/// stored sRGB bytes (verified directly against the PNG's own pixel data), but converting that
+/// tag to `.sRGB` applies a real, incorrect gamma remap on top of already-correct numbers —
+/// measured shifting (28,28,28)/`#1C1C1C` to (37,37,37)/`#252525`. Using the components as
+/// returned, unconverted, matches the source image exactly.
 func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
     guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
           let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return Array(repeating: nil, count: rects.count) }
@@ -94,7 +101,7 @@ func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
         for (nx, ny) in points {
             let px = min(max(Int(nx * CGFloat(w)), 0), w - 1)
             let py = min(max(Int(ny * CGFloat(h)), 0), h - 1)
-            guard let c = rep.colorAt(x: px, y: py)?.usingColorSpace(.sRGB) else { continue }
+            guard let c = rep.colorAt(x: px, y: py) else { continue }
             r += c.redComponent; g += c.greenComponent; b += c.blueComponent; n += 1
         }
         guard n > 0 else { return nil }
@@ -120,7 +127,7 @@ func sampledTextColors(at path: String, rects: [CGRect]) -> [Color?] {
     func colorAt(_ nx: CGFloat, _ ny: CGFloat) -> NSColor? {
         let px = min(max(Int(nx * CGFloat(w)), 0), w - 1)
         let py = min(max(Int(ny * CGFloat(h)), 0), h - 1)
-        return rep.colorAt(x: px, y: py)?.usingColorSpace(.sRGB)
+        return rep.colorAt(x: px, y: py)
     }
     func sample(_ rect: CGRect) -> Color? {
         // Vision rects are normalised with origin bottom-left; bitmap pixel rows run top-down.
