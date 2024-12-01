@@ -76,7 +76,8 @@ func fittedFontSize(for text: String, weight: Font.Weight, design: Font.Design, 
     var size = box.height / capRatio
     let f = nsFont(size: size, weight: weight, design: design)
     let width = (text as NSString).size(withAttributes: [.font: f]).width
-    if width > box.width, width > 0 { size *= box.width / width }
+    let allowedWidth = box.width * widthTolerance   // see widthTolerance in FontMatch.swift
+    if width > allowedWidth, width > 0 { size *= allowedWidth / width }
     return max(size, 4)
 }
 

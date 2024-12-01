@@ -49,6 +49,12 @@ func candidateFontFamilies() -> [String] {
     return curatedFontFamilies.filter { available.contains($0) && !isMonospace($0) }
 }
 
+/// How much a fitted font's natural width may exceed the match box's width before the cap-height
+/// fit gets shrunk to compensate — shared by fitBoth here and fittedFontSize(for:weight:design:)
+/// in Settings.swift, so the manual and auto-font paths behave the same way. See fitBoth's
+/// comment for why a hard zero-tolerance cutoff read as noticeably too small.
+let widthTolerance: CGFloat = 1.12
+
 private func isMonospace(_ family: String) -> Bool {
     NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: 12)?
         .fontDescriptor.symbolicTraits.contains(.monoSpace) ?? false
@@ -179,7 +185,14 @@ private func fitBoth(text: String, family: String, bold: Bool, box: CGSize) -> C
     var size = box.height / capRatio
     if let f = nsFont(family: family, bold: bold, size: size) {
         let width = (text as NSString).size(withAttributes: [.font: f]).width
-        if width > box.width, width > 0 { size *= box.width / width }
+        // Vision's box is a tight fit around the *original* font's glyphs; a substitute family
+        // at the same cap height routinely needs a bit more horizontal room for the same text
+        // (different letter proportions), and shrinking all the way to zero tolerance pulled the
+        // vertical size down with it more than the actual overflow warranted, reading as
+        // noticeably smaller than the source text. A small tolerance keeps that correction from
+        // over-firing on minor, expected overflow while still catching genuine blowouts.
+        let allowedWidth = box.width * widthTolerance
+        if width > allowedWidth, width > 0 { size *= allowedWidth / width }
     }
     return max(size, 4)
 }
