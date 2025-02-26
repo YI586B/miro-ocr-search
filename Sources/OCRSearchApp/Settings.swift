@@ -121,7 +121,12 @@ struct MatchView: View {
                 let w = HL.fontWeight(weight), d = HL.fontDesign(design)
                 let useMatch = autoFont && renderedFontName != nil
                 let effectiveTextColor = (autoTextColor ? sampledTextColor : nil) ?? textColor
-                ZStack {
+                // .leading, not the default .center: the substitute font's natural width rarely
+                // matches the original's exactly (that's the whole reason fitting exists), so
+                // centering left as much slack on the left as the right, drifting the text's
+                // start away from where the original text actually began. Anchoring the left
+                // edge instead keeps it aligned with the source regardless of any width slack.
+                ZStack(alignment: .leading) {
                     Rectangle().fill((autoBackground ? sampled : nil) ?? background)
                     Group {
                         if useMatch {
