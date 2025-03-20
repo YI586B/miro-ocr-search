@@ -262,8 +262,8 @@ struct PreviewView: View {
                         let scale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1
                         ZStack(alignment: .topLeading) {
                             ForEach(Array((show ? matches : []).enumerated()), id: \.offset) { i, m in
-                                let w = m.rect.width * geo.size.width + 4
-                                let h = m.rect.height * geo.size.height + 4
+                                let w = m.rect.width * geo.size.width + matchBoxPadding
+                                let h = m.rect.height * geo.size.height + matchBoxPadding
                                 MatchView(text: m.text, size: CGSize(width: w, height: h), mode: mode,
                                           box: box, textColor: txt, opacity: opacity, outline: outline,
                                           design: design, weight: weight,
@@ -286,8 +286,8 @@ struct PreviewView: View {
                             }
                             if let i = hoverIndex, matches.indices.contains(i) {
                                 let m = matches[i]
-                                let w = m.rect.width * geo.size.width + 4
-                                let h = m.rect.height * geo.size.height + 4
+                                let w = m.rect.width * geo.size.width + matchBoxPadding
+                                let h = m.rect.height * geo.size.height + matchBoxPadding
                                 let mf = matchedFonts.indices.contains(i) ? matchedFonts[i] : nil
                                 MatchInfoPopup(text: m.text, mode: mode,
                                                count: matches.filter { $0.text.caseInsensitiveCompare(m.text) == .orderedSame }.count,

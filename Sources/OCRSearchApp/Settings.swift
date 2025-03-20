@@ -83,6 +83,12 @@ func fittedFontSize(for text: String, weight: Font.Weight, design: Font.Design, 
 
 /// One highlighted match: either a bounding box, or the matched text drawn to fit the box
 /// (font color, over a background patch matching the image so it covers the original text).
+/// Extra width/height PreviewView adds to each match's box for visual breathing room (see its
+/// `+ matchBoxPadding` when sizing MatchView) — split evenly on both sides since the box stays
+/// centered on the same point, i.e. `matchBoxPadding / 2` on each edge. MatchView needs to know
+/// this too, to compensate: it left-aligns text to the box's true edge, not the padded frame's.
+let matchBoxPadding: CGFloat = 4
+
 struct MatchView: View {
     let text: String
     let size: CGSize
@@ -136,6 +142,7 @@ struct MatchView: View {
                     }
                     .foregroundStyle(effectiveTextColor)
                     .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
+                    .padding(.leading, matchBoxPadding / 2)   // undo the box padding's left half; see matchBoxPadding
                 }
                 .frame(width: size.width, height: size.height)
             } else {
