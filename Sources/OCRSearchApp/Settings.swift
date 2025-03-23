@@ -142,7 +142,7 @@ struct MatchView: View {
                     }
                     .foregroundStyle(effectiveTextColor)
                     .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
-                    .padding(.leading, matchBoxPadding / 2)   // undo the box padding's left half; see matchBoxPadding
+                    .offset(x: matchBoxPadding / 2)   // undo the box padding's left half; see matchBoxPadding
                 }
                 .frame(width: size.width, height: size.height)
             } else {
