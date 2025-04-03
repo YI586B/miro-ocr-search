@@ -142,7 +142,16 @@ struct MatchView: View {
                     }
                     .foregroundStyle(effectiveTextColor)
                     .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
-                    .offset(x: matchBoxPadding / 2)   // undo the box padding's left half; see matchBoxPadding
+                    // matchBoxPadding/2 undoes the box padding's left half (see matchBoxPadding).
+                    // The extra +1.5pt is an empirical nudge on top of that: measured directly
+                    // against same-framing before/after screenshots (overlay toggled off/on,
+                    // window untouched between shots) with matchBoxPadding/2 alone still applied,
+                    // the redrawn word's left edge was a consistent 3px (1.5pt at 2x) left of the
+                    // source's, reproduced identically across two independent screenshot pairs —
+                    // most likely the substitute font's own glyph left-side-bearing differing
+                    // slightly from the original's, which isn't something box-level padding
+                    // accounts for. Tuned to this specific measurement, not derived.
+                    .offset(x: matchBoxPadding / 2 + 1.5)
                 }
                 .frame(width: size.width, height: size.height)
             } else {
