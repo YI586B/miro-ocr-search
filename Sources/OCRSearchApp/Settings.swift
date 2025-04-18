@@ -142,16 +142,18 @@ struct MatchView: View {
                     }
                     .foregroundStyle(effectiveTextColor)
                     .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
-                    // matchBoxPadding/2 undoes the box padding's left half (see matchBoxPadding).
-                    // The extra +1.5pt is an empirical nudge on top of that: measured directly
-                    // against same-framing before/after screenshots (overlay toggled off/on,
-                    // window untouched between shots) with matchBoxPadding/2 alone still applied,
-                    // the redrawn word's left edge was a consistent 3px (1.5pt at 2x) left of the
-                    // source's, reproduced identically across two independent screenshot pairs —
-                    // most likely the substitute font's own glyph left-side-bearing differing
-                    // slightly from the original's, which isn't something box-level padding
-                    // accounts for. Tuned to this specific measurement, not derived.
-                    .offset(x: matchBoxPadding / 2 + 1.5)
+                    // Undo the box padding's left half; see matchBoxPadding. (An extra +1.5pt
+                    // empirical nudge lived here briefly, tuned to one same-framing screenshot
+                    // pair where the residual was a consistent 3px left. Broader testing across
+                    // different window positions showed that residual isn't a fixed bug: the
+                    // direction flips (3px right in other pairs, same magnitude) depending on
+                    // where the window happens to sit on screen -- almost certainly device-pixel
+                    // rounding noise from computing this position with floating-point math on
+                    // every render, vs. the source image's already-baked-in pixel grid. A single
+                    // constant can't correct a sign-flipping error, and the attempt measurably
+                    // made other cases worse, so it's removed; matchBoxPadding/2 is the part
+                    // that's actually provable and stays.)
+                    .offset(x: matchBoxPadding / 2)
                 }
                 .frame(width: size.width, height: size.height)
             } else {
