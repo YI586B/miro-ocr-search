@@ -218,6 +218,10 @@ struct PreviewView: View {
     @State private var bgColors: [Color?] = []
     @State private var textColors: [Color?] = []
     @State private var matchedFonts: [String?] = []
+    /// The family bestMatchingFont(forImage:) actually detected, kept separately from
+    /// matchedFonts (which holds the *effective* family, i.e. `manualFont` when it's set) purely
+    /// so the toolbar can show the user what auto-detection found, even while overridden.
+    @State private var detectedFontName: String?
     @State private var pixelSize: CGSize = .zero
     /// Fitted font size per match, computed once at the image's native pixel scale rather than
     /// on demand — fitting takes several font-metric lookups, and computing it live inside
@@ -246,6 +250,8 @@ struct PreviewView: View {
     @AppStorage(HL.design) private var design = "default"
     @AppStorage(HL.weight) private var weight = "regular"
     @AppStorage(HL.autoFont) private var autoFont = false
+    @AppStorage(HL.manualFont) private var manualFont = ""
+    @AppStorage(HL.sizeScale) private var sizeScale: Double = 1.0
 
     var body: some View {
         let box = Color(hex: boxHex) ?? .yellow
@@ -297,7 +303,8 @@ struct PreviewView: View {
                                                boxColor: box,
                                                textColor: (autoTextColor ? (textColors.indices.contains(i) ? textColors[i] : nil) : nil) ?? txt,
                                                bgColor: (autoBg ? (bgColors.indices.contains(i) ? bgColors[i] : nil) : nil) ?? bg,
-                                               opacity: opacity, matchedFont: mf, autoFont: autoFont)
+                                               opacity: opacity, matchedFont: mf, autoFont: autoFont,
+                                               fontIsManual: !manualFont.isEmpty)
                                     .allowsHitTesting(false)   // never steals hover from the match it describes
                                     .position(x: min(hoverPoint.x + 110, geo.size.width - 100),
                                               y: min(hoverPoint.y + 70, geo.size.height - 60))
@@ -341,11 +348,34 @@ struct PreviewView: View {
                                 .help("Pick up the color immediately around each match and use it as its background; the Background color above is the fallback")
                             Toggle("Auto-match an installed font", isOn: $autoFont)
                                 .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font), instead of the Font chosen in Settings")
+                            Divider()
+                            // Picking a specific font here overrides whatever auto-match found
+                            // (or turns auto-match on, if it was off, so the pick takes effect
+                            // immediately) — "Auto" reverts to the detected family.
+                            HStack {
+                                Text("Font").foregroundStyle(.secondary)
+                                Spacer()
+                                Picker("", selection: Binding<String>(
+                                    get: { manualFont },
+                                    set: { manualFont = $0; if !$0.isEmpty { autoFont = true } }
+                                )) {
+                                    Text(detectedFontName.map { "Auto (\($0))" } ?? "Auto").tag("")
+                                    Divider()
+                                    ForEach(candidateFontFamilies(), id: \.self) { Text($0).tag($0) }
+                                }
+                                .labelsHidden().frame(width: 170)
+                            }
+                            HStack {
+                                Text("Size").foregroundStyle(.secondary)
+                                Slider(value: $sizeScale, in: 0.5...1.5, step: 0.05)
+                                Text("\(Int(sizeScale * 100))%").monospacedDigit().frame(width: 42, alignment: .trailing)
+                            }
+                            .help("Scales every match's fitted size up or down; 100% is the plain auto-fit")
                         } else {
                             ColorPicker("Box", selection: boxBinding, supportsOpacity: false)
                         }
                     }
-                    .padding(14).frame(width: 280)
+                    .padding(14).frame(width: 300)
                 }
             Button("Reveal in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
@@ -390,6 +420,11 @@ struct PreviewView: View {
         }
         .onChange(of: design) { _ in Task { await recomputeFontSizes() } }
         .onChange(of: weight) { _ in Task { await recomputeFontSizes(); recomputeRenderedFontNames() } }
+        .onChange(of: manualFont) { _ in
+            applyFontOverride()
+            Task { await recomputeFontSizes(); recomputeRenderedFontNames() }
+        }
+        .onChange(of: sizeScale) { _ in Task { await recomputeFontSizes() } }
     }
 
     /// Auto-matches the whole image's text to one closest-looking installed font at once (see
@@ -415,7 +450,16 @@ struct PreviewView: View {
             let items = all.map { (text: $0.text, rect: $0.rect) }
             return bestMatchingFont(forImage: items, pixelSize: px, from: families)
         }.value
-        matchedFonts = Array(repeating: winner, count: matches.count)
+        detectedFontName = winner
+        applyFontOverride()
+    }
+
+    /// The family actually rendered: `manualFont` when the user has picked one from the style
+    /// popover's Font picker, otherwise whatever detectFonts() found. Re-run whenever either
+    /// changes, without re-scanning the image (detectFonts already did the expensive part).
+    private func applyFontOverride() {
+        let effective = manualFont.isEmpty ? detectedFontName : manualFont
+        matchedFonts = Array(repeating: effective, count: matches.count)
     }
 
     /// Cheap per-frame conversion of a match's cached native-pixel-scale font size (fontSizes,
@@ -433,13 +477,14 @@ struct PreviewView: View {
         guard !matches.isEmpty, pixelSize.width > 0, pixelSize.height > 0 else { fontSizes = []; return }
         let items = matches.map { (text: $0.text, rect: $0.rect) }
         let mf = matchedFonts
-        let af = autoFont, w = weight, d = design, px = pixelSize
+        let af = autoFont, w = weight, d = design, px = pixelSize, scaleAdj = sizeScale
         fontSizes = await Task.detached(priority: .userInitiated) {
             items.enumerated().map { i, it in
                 let box = CGSize(width: it.rect.width * px.width, height: it.rect.height * px.height)
                 let family = i < mf.count ? mf[i] : nil
-                return effectiveFontSize(for: it.text, weight: HL.fontWeight(w), design: HL.fontDesign(d),
-                                          matchedFamily: family, autoFont: af, fitting: box)
+                let base = effectiveFontSize(for: it.text, weight: HL.fontWeight(w), design: HL.fontDesign(d),
+                                              matchedFamily: family, autoFont: af, fitting: box)
+                return max(base * scaleAdj, 4)   // sizeScale: user's manual nudge, see the Size control
             }
         }.value
     }

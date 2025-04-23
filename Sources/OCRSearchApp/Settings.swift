@@ -29,6 +29,8 @@ enum HL {
     static let design = "highlightFontDesign"    // default | rounded | serif | monospaced
     static let weight = "highlightFontWeight"    // regular | medium | bold
     static let autoFont = "highlightAutoFont"    // auto-match an installed font instead of using design
+    static let manualFont = "highlightManualFont"  // overrides the auto-detected family; "" = use it as detected
+    static let sizeScale = "highlightSizeScale"    // multiplier on the fitted size, user-adjustable; default 1.0
     static let defaultBox = "#FFD60A"
     static let defaultText = "#000000"
     static let defaultBg = "#FFFFFF"
@@ -179,6 +181,7 @@ struct MatchInfoPopup: View {
     let opacity: Double
     var matchedFont: String? = nil
     var autoFont: Bool = false
+    var fontIsManual: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -188,7 +191,7 @@ struct MatchInfoPopup: View {
             Divider()
             if mode == "text" {
                 if autoFont, let mf = matchedFont {
-                    row("Font", "\(mf) (auto), \(Int(fontSize.rounded()))pt")
+                    row("Font", "\(mf) \(fontIsManual ? "(picked)" : "(auto)"), \(Int(fontSize.rounded()))pt")
                 } else if autoFont {
                     row("Font", "no match found, \(Int(fontSize.rounded()))pt")
                 } else {
@@ -239,6 +242,8 @@ struct SettingsView: View {
     @AppStorage(HL.design) private var design = "default"
     @AppStorage(HL.weight) private var weight = "regular"
     @AppStorage(HL.autoFont) private var autoFont = false
+    @AppStorage(HL.manualFont) private var manualFont = ""
+    @AppStorage(HL.sizeScale) private var sizeScale: Double = 1.0
 
     var body: some View {
         let box = Binding<Color>(get: { Color(hex: boxHex) ?? .yellow }, set: { boxHex = $0.hexString })
@@ -285,7 +290,7 @@ struct SettingsView: View {
                      : "They're drawn over the Background color above, everywhere.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(autoFont
-                     ? "Instead of the Font above, each match is redrawn in whichever installed font best matches its size and proportions — or in \(systemFontReplacement) if that turns out to be the system font."
+                     ? "Instead of the Font above, each match is redrawn in whichever installed font best matches its size and proportions — or in \(systemFontReplacement) if that turns out to be the system font. To pick a specific font (or nudge the size) instead of the auto-match, use the palette button in an open preview window's toolbar, where you can see what was detected."
                      : "Uses the Font and Weight above for every match.")
                     .font(.caption).foregroundStyle(.secondary)
             }.disabled(mode == "box")
@@ -299,7 +304,7 @@ struct SettingsView: View {
                               outline: outline, design: design, weight: weight,
                               background: bg.wrappedValue, autoBackground: autoBg,
                               fontSize: fittedFontSize(for: "Screen Active", weight: HL.fontWeight(weight),
-                                                        design: HL.fontDesign(design), fitting: CGSize(width: 150, height: 26)))
+                                                        design: HL.fontDesign(design), fitting: CGSize(width: 150, height: 26)) * sizeScale)
                         .offset(x: -50)
                 }.frame(height: 50)
             }
@@ -308,6 +313,7 @@ struct SettingsView: View {
                 show = true; mode = "box"; boxHex = HL.defaultBox; opacity = 0.35; outline = true
                 textHex = HL.defaultText; autoTextColor = true; bgHex = HL.defaultBg; autoBg = true
                 design = "default"; weight = "regular"; autoFont = false
+                manualFont = ""; sizeScale = 1.0
             }
         }
         .padding(20).frame(width: 460)
