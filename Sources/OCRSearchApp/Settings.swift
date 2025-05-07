@@ -30,7 +30,8 @@ enum HL {
     static let weight = "highlightFontWeight"    // regular | medium | bold
     static let autoFont = "highlightAutoFont"    // auto-match an installed font instead of using design
     static let manualFont = "highlightManualFont"  // overrides the auto-detected family; "" = use it as detected
-    static let sizeScale = "highlightSizeScale"    // multiplier on the fitted size, user-adjustable; default 1.0
+    static let manualSize = "highlightManualSize"  // fixed on-screen pt size for every match; 0 = auto-fit
+    static let italic = "highlightItalic"          // draw matched words in italic
     static let defaultBox = "#FFD60A"
     static let defaultText = "#000000"
     static let defaultBg = "#FFFFFF"
@@ -122,6 +123,11 @@ struct MatchView: View {
     /// -- mirrors `sampled`/`autoBackground` above exactly, for the same reason.
     var sampledTextColor: Color? = nil
     var autoTextColor: Bool = true
+    /// Applied as a view modifier on top of whichever font was chosen (matched family or
+    /// design), rather than resolving a true italic font file: SwiftUI synthesizes an oblique
+    /// slant when a real italic member isn't available, which is simpler and more reliably
+    /// available across arbitrary installed families than hunting for an "-Italic" variant.
+    var italic: Bool = false
 
     var body: some View {
         Group {
@@ -142,6 +148,7 @@ struct MatchView: View {
                         }
                         else { Text(text).font(.system(size: fontSize, weight: w, design: d)) }
                     }
+                    .italic(italic)
                     .foregroundStyle(effectiveTextColor)
                     .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
                     // Undo the box padding's left half; see matchBoxPadding. (An extra +1.5pt
@@ -243,7 +250,8 @@ struct SettingsView: View {
     @AppStorage(HL.weight) private var weight = "regular"
     @AppStorage(HL.autoFont) private var autoFont = false
     @AppStorage(HL.manualFont) private var manualFont = ""
-    @AppStorage(HL.sizeScale) private var sizeScale: Double = 1.0
+    @AppStorage(HL.manualSize) private var manualSize: Double = 0
+    @AppStorage(HL.italic) private var italic = false
 
     var body: some View {
         let box = Binding<Color>(get: { Color(hex: boxHex) ?? .yellow }, set: { boxHex = $0.hexString })
@@ -280,6 +288,7 @@ struct SettingsView: View {
                 Picker("Weight", selection: $weight) {
                     Text("Regular").tag("regular"); Text("Medium").tag("medium"); Text("Bold").tag("bold")
                 }
+                Toggle("Italic", isOn: $italic)
                 Toggle("Auto-match an installed font", isOn: $autoFont)
                 Text(autoTextColor
                      ? "Matched words are re-drawn in their own detected ink color, sized and fonted to closely match the original text. The Font color above is only a fallback, used if sampling isn't possible."
@@ -303,8 +312,9 @@ struct SettingsView: View {
                               box: box.wrappedValue, textColor: txt.wrappedValue, opacity: opacity,
                               outline: outline, design: design, weight: weight,
                               background: bg.wrappedValue, autoBackground: autoBg,
-                              fontSize: fittedFontSize(for: "Screen Active", weight: HL.fontWeight(weight),
-                                                        design: HL.fontDesign(design), fitting: CGSize(width: 150, height: 26)) * sizeScale)
+                              fontSize: manualSize > 0 ? manualSize : fittedFontSize(for: "Screen Active", weight: HL.fontWeight(weight),
+                                                        design: HL.fontDesign(design), fitting: CGSize(width: 150, height: 26)),
+                              italic: italic)
                         .offset(x: -50)
                 }.frame(height: 50)
             }
@@ -313,7 +323,7 @@ struct SettingsView: View {
                 show = true; mode = "box"; boxHex = HL.defaultBox; opacity = 0.35; outline = true
                 textHex = HL.defaultText; autoTextColor = true; bgHex = HL.defaultBg; autoBg = true
                 design = "default"; weight = "regular"; autoFont = false
-                manualFont = ""; sizeScale = 1.0
+                manualFont = ""; manualSize = 0; italic = false
             }
         }
         .padding(20).frame(width: 460)

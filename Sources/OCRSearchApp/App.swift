@@ -238,6 +238,11 @@ struct PreviewView: View {
     @State private var hoverIndex: Int?
     @State private var hoverPoint: CGPoint = .zero
     @State private var showStylePopover = false
+    /// Mirrors the GeometryReader's `scale` (display points per native image pixel) outside of
+    /// it, so the toolbar's Size field — which lives in .toolbar, with no access to that
+    /// GeometryReader — can show and set a size in the same on-screen points the user actually
+    /// sees, matching how every other text-size field works, rather than some internal unit.
+    @State private var displayScale: CGFloat = 1
     @AppStorage(HL.show) private var show = true
     @AppStorage(HL.mode) private var mode = "box"
     @AppStorage(HL.boxHex) private var boxHex = HL.defaultBox
@@ -251,7 +256,8 @@ struct PreviewView: View {
     @AppStorage(HL.weight) private var weight = "regular"
     @AppStorage(HL.autoFont) private var autoFont = false
     @AppStorage(HL.manualFont) private var manualFont = ""
-    @AppStorage(HL.sizeScale) private var sizeScale: Double = 1.0
+    @AppStorage(HL.manualSize) private var manualSize: Double = 0
+    @AppStorage(HL.italic) private var italic = false
 
     var body: some View {
         let box = Color(hex: boxHex) ?? .yellow
@@ -280,7 +286,7 @@ struct PreviewView: View {
                                           fontSize: displayFontSize(i, scale: scale),
                                           renderedFontName: renderedFontNames.indices.contains(i) ? renderedFontNames[i] : nil,
                                           sampledTextColor: textColors.indices.contains(i) ? textColors[i] : nil,
-                                          autoTextColor: autoTextColor)
+                                          autoTextColor: autoTextColor, italic: italic)
                                     .position(x: m.rect.midX * geo.size.width,
                                               y: (1 - m.rect.midY) * geo.size.height)
                                     .onContinuousHover(coordinateSpace: .named("preview")) { phase in
@@ -311,6 +317,9 @@ struct PreviewView: View {
                             }
                         }
                         .coordinateSpace(name: "preview")
+                        .onAppear { displayScale = scale }
+                        .onChange(of: geo.size) { _ in displayScale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1 }
+                        .onChange(of: pixelSize) { _ in displayScale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1 }
                     })
                     .padding(12)
             }
@@ -349,12 +358,22 @@ struct PreviewView: View {
                             Toggle("Auto-match an installed font", isOn: $autoFont)
                                 .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font), instead of the Font chosen in Settings")
                             Divider()
-                            // Picking a specific font here overrides whatever auto-match found
-                            // (or turns auto-match on, if it was off, so the pick takes effect
-                            // immediately) — "Auto" reverts to the detected family.
-                            HStack {
-                                Text("Font").foregroundStyle(.secondary)
-                                Spacer()
+                            // Laid out like an ordinary text-editing toolbar (font, point size,
+                            // then Bold/Italic toggles) rather than a settings-style option list.
+                            // Picking a font or typing a size overrides whatever auto-match/fit
+                            // found (and turns auto-match on, if it was off, so the change takes
+                            // visible effect immediately); "Auto" in the font menu, or the Reset
+                            // button once either is overridden, goes back to automatic.
+                            let hoveredOrFirstSize: Double = {
+                                let idx = hoverIndex ?? 0
+                                let native = fontSizes.indices.contains(idx) ? fontSizes[idx] : 17
+                                return Double((native * displayScale).rounded())
+                            }()
+                            let sizeBinding = Binding<Double>(
+                                get: { manualSize > 0 ? manualSize : hoveredOrFirstSize },
+                                set: { manualSize = max($0, 1) }
+                            )
+                            HStack(spacing: 8) {
                                 Picker("", selection: Binding<String>(
                                     get: { manualFont },
                                     set: { manualFont = $0; if !$0.isEmpty { autoFont = true } }
@@ -363,14 +382,27 @@ struct PreviewView: View {
                                     Divider()
                                     ForEach(candidateFontFamilies(), id: \.self) { Text($0).tag($0) }
                                 }
-                                .labelsHidden().frame(width: 170)
+                                .labelsHidden().frame(width: 148)
+
+                                TextField("", value: sizeBinding, format: .number)
+                                    .textFieldStyle(.roundedBorder).frame(width: 38)
+                                    .multilineTextAlignment(.trailing)
+                                Stepper("", value: sizeBinding, in: 1...400).labelsHidden()
+                                Text("pt").font(.caption).foregroundStyle(.secondary)
                             }
-                            HStack {
-                                Text("Size").foregroundStyle(.secondary)
-                                Slider(value: $sizeScale, in: 0.5...1.5, step: 0.05)
-                                Text("\(Int(sizeScale * 100))%").monospacedDigit().frame(width: 42, alignment: .trailing)
+                            HStack(spacing: 6) {
+                                Toggle(isOn: Binding(get: { weight == "bold" }, set: { weight = $0 ? "bold" : "regular" })) {
+                                    Text("B").bold()
+                                }.toggleStyle(.button).help("Bold")
+                                Toggle(isOn: $italic) {
+                                    Text("I").italic()
+                                }.toggleStyle(.button).help("Italic")
+                                Spacer()
+                                if !manualFont.isEmpty || manualSize > 0 {
+                                    Button("Reset to auto") { manualFont = ""; manualSize = 0 }
+                                        .font(.caption).buttonStyle(.link)
+                                }
                             }
-                            .help("Scales every match's fitted size up or down; 100% is the plain auto-fit")
                         } else {
                             ColorPicker("Box", selection: boxBinding, supportsOpacity: false)
                         }
@@ -424,7 +456,6 @@ struct PreviewView: View {
             applyFontOverride()
             Task { await recomputeFontSizes(); recomputeRenderedFontNames() }
         }
-        .onChange(of: sizeScale) { _ in Task { await recomputeFontSizes() } }
     }
 
     /// Auto-matches the whole image's text to one closest-looking installed font at once (see
@@ -464,9 +495,14 @@ struct PreviewView: View {
 
     /// Cheap per-frame conversion of a match's cached native-pixel-scale font size (fontSizes,
     /// see recomputeFontSizes) to on-screen points — a single multiply, safe to call on every
-    /// hover-move or resize instead of re-fitting from scratch.
+    /// hover-move or resize instead of re-fitting from scratch. `manualSize`, when set, is
+    /// already in on-screen points (that's what the toolbar's Size field shows and edits), so it
+    /// bypasses the native-pixel cache and scale multiply entirely — every match gets exactly
+    /// that point size, the same way setting a size in any text editor applies to the whole
+    /// selection rather than scaling each run individually.
     private func displayFontSize(_ i: Int, scale: CGFloat) -> CGFloat {
-        (fontSizes.indices.contains(i) ? fontSizes[i] : 12) * scale
+        if manualSize > 0 { return manualSize }
+        return (fontSizes.indices.contains(i) ? fontSizes[i] : 12) * scale
     }
 
     /// Fits each match's font size once, at the image's native pixel scale rather than the
@@ -477,14 +513,13 @@ struct PreviewView: View {
         guard !matches.isEmpty, pixelSize.width > 0, pixelSize.height > 0 else { fontSizes = []; return }
         let items = matches.map { (text: $0.text, rect: $0.rect) }
         let mf = matchedFonts
-        let af = autoFont, w = weight, d = design, px = pixelSize, scaleAdj = sizeScale
+        let af = autoFont, w = weight, d = design, px = pixelSize
         fontSizes = await Task.detached(priority: .userInitiated) {
             items.enumerated().map { i, it in
                 let box = CGSize(width: it.rect.width * px.width, height: it.rect.height * px.height)
                 let family = i < mf.count ? mf[i] : nil
-                let base = effectiveFontSize(for: it.text, weight: HL.fontWeight(w), design: HL.fontDesign(d),
-                                              matchedFamily: family, autoFont: af, fitting: box)
-                return max(base * scaleAdj, 4)   // sizeScale: user's manual nudge, see the Size control
+                return effectiveFontSize(for: it.text, weight: HL.fontWeight(w), design: HL.fontDesign(d),
+                                          matchedFamily: family, autoFont: af, fitting: box)
             }
         }.value
     }
