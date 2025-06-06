@@ -1,7 +1,7 @@
 import Foundation
 import ImageIO
 
-public enum MiroError: Error, CustomStringConvertible {
+public enum MiroError: Error, CustomStringConvertible, LocalizedError {
     case http(Int, String), badResponse
     public var description: String {
         switch self {
@@ -9,6 +9,10 @@ public enum MiroError: Error, CustomStringConvertible {
         case .badResponse: return "unexpected Miro response"
         }
     }
+    // So callers using error.localizedDescription (the normal way to surface an error to a
+    // user) get this description too, instead of Swift's generic "operation couldn't be
+    // completed" fallback for errors that aren't NSError-bridged.
+    public var errorDescription: String? { description }
 }
 
 /// Minimal Miro REST v2 client. Token comes from MIRO_TOKEN (a personal access token

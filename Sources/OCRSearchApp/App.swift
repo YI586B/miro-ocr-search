@@ -14,6 +14,23 @@ let appLogo: NSImage? = {
     return NSImage(contentsOfFile: url.path)
 }()
 
+/// Sources/assets/watermark.jpeg, resolved the same way as appLogo. Stamped onto every opened
+/// preview's bottom-right corner (see PreviewView) — size and position measured directly off a
+/// reference screenshot that already carried this watermark (miro-files/IMG_0849.PNG): the badge
+/// there was 63×34px in a 1356×2948 image (4.65% of width, 1.15% of height), 21px/1.55% in from
+/// the right edge and 20px/0.68% up from the bottom — matched here as fractions of the displayed
+/// image so it scales the same way regardless of window size.
+let watermarkImage: NSImage? = {
+    let url = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .appendingPathComponent("assets/watermark.jpeg")
+    return NSImage(contentsOfFile: url.path)
+}()
+let watermarkWidthFraction: CGFloat = 0.0465
+let watermarkRightMarginFraction: CGFloat = 0.0155
+let watermarkBottomMarginFraction: CGFloat = 0.0068
+
 /// Small rounded Miro logo badge, marking the app's Miro-related actions (export button, the
 /// export sheet, "open board"). Square, dark card with the wordmark baked in — looks right at
 /// any size without needing its own background.
@@ -314,6 +331,20 @@ struct PreviewView: View {
                                     .allowsHitTesting(false)   // never steals hover from the match it describes
                                     .position(x: min(hoverPoint.x + 110, geo.size.width - 100),
                                               y: min(hoverPoint.y + 70, geo.size.height - 60))
+                            }
+                            // Stamped on every opened image, independent of search matches/overlay
+                            // state -- see watermarkImage's doc comment for where the size/position
+                            // fractions came from.
+                            if let watermarkImage {
+                                let ww = geo.size.width * watermarkWidthFraction
+                                let wh = ww * (watermarkImage.size.height / watermarkImage.size.width)
+                                Image(nsImage: watermarkImage).resizable().scaledToFit()
+                                    .frame(width: ww, height: wh)
+                                    .clipShape(RoundedRectangle(cornerRadius: wh * 0.2))
+                                    .opacity(0.85)
+                                    .allowsHitTesting(false)
+                                    .position(x: geo.size.width * (1 - watermarkRightMarginFraction) - ww / 2,
+                                              y: geo.size.height * (1 - watermarkBottomMarginFraction) - wh / 2)
                             }
                         }
                         .coordinateSpace(name: "preview")

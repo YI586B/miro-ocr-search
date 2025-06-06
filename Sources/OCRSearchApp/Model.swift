@@ -3,6 +3,10 @@ import AppKit
 import UniformTypeIdentifiers
 import OCRSearchCore
 
+/// "1 result" / "2 results" — every status message below used to print the literal string
+/// "result(s)", which reads as a debug placeholder rather than finished copy.
+func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+
 struct Hit: Identifiable, Hashable {
     let path: String
     var snippet: String
@@ -32,7 +36,7 @@ final class Model: ObservableObject {
             let db = try Database(path: dbPath)
             let manual = results.filter { $0.snippet.isEmpty && selection.contains($0.path) }  // keep added files
             results = try db.search(ftsQuery(query, mode: searchMode), limit: 100).map { Hit(path: $0.path, snippet: $0.snippet) } + manual
-            status = "\(results.count) result(s)"
+            status = plural(results.count, "result")
         } catch { status = "Search error: \(error.localizedDescription)" }
     }
 
@@ -59,14 +63,14 @@ final class Model: ObservableObject {
         let items = results.filter { selection.contains($0.path) }.map { (path: $0.path, snippet: $0.snippet) }
         guard !items.isEmpty else { return }
         guard !token.isEmpty else { status = "Enter your Miro token first."; return }
-        busy = true; link = nil; status = "Exporting \(items.count) item(s) to Miro…"
+        busy = true; link = nil; status = "Exporting \(plural(items.count, "item")) to Miro…"
         let (tok, id, name) = (token, boardID.trimmingCharacters(in: .whitespaces), boardName)
         Task.detached {
             do {
                 let l = try exportToMiro(items: items, token: tok, boardID: id.isEmpty ? nil : id,
                                          boardName: name, log: { _ in })
-                await MainActor.run { self.link = URL(string: l); self.status = "Exported \(items.count) item(s)."; self.busy = false }
-            } catch { await MainActor.run { self.status = "Export failed: \(error)"; self.busy = false } }
+                await MainActor.run { self.link = URL(string: l); self.status = "Exported \(plural(items.count, "item"))."; self.busy = false }
+            } catch { await MainActor.run { self.status = "Miro export failed: \(error.localizedDescription)"; self.busy = false } }
         }
     }
 

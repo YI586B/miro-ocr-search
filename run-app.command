@@ -1,6 +1,8 @@
 #!/bin/bash
-# Double-click in Finder: builds the release binary and starts the OCR search window.
+# Double-click in Finder: builds the app bundle and launches it via `open`, so it
+# runs as a real macOS app (proper name, icon, Dock/menu bar identity) instead of
+# a bare Unix binary.
 cd "$(dirname "$0")"
-swift build -c release 2>&1 | grep -E "error|Build complete" 
-[ "${PIPESTATUS[0]}" -eq 0 ] && exec .build/release/OCRSearchApp
+./build-app.sh
+[ -d "OCR Search.app" ] && exec open "OCR Search.app"
 echo; echo "Build failed - copy the error lines above and send them to Claude."; read -n1 -p "Press any key to close"
