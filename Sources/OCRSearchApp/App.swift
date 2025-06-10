@@ -64,16 +64,26 @@ struct OCRSearchApp: App {
         WindowGroup("OCR Image Search") { ContentView().frame(minWidth: 760, minHeight: 520) }
         // Full-size viewer: one window per image, closable with the red button, Cmd+W or Esc.
         WindowGroup("Preview", id: "preview", for: PreviewRequest.self) { $req in
-            if let req { PreviewView(path: req.path, query: req.query, searchMode: req.mode) }
+            if let req { PreviewView(allPaths: req.allPaths, startIndex: req.startIndex, query: req.query, searchMode: req.mode) }
         }.defaultSize(width: 620, height: 900)
         Settings { SettingsView() }
     }
 }
 
 struct PreviewRequest: Codable, Hashable {
-    let path: String
+    /// Every result path from the search this preview was opened from, in list order, so the
+    /// window can page through them with Previous/Next — not just the one that was clicked.
+    let allPaths: [String]
+    let startIndex: Int
     let query: String
     var mode: SearchMode = .phrase
+
+    init(path: String, query: String, mode: SearchMode = .phrase, allPaths: [String]? = nil, startIndex: Int? = nil) {
+        self.allPaths = allPaths ?? [path]
+        self.startIndex = startIndex ?? self.allPaths.firstIndex(of: path) ?? 0
+        self.query = query
+        self.mode = mode
+    }
 }
 
 /// An image's pixel dimensions, read from its metadata without decoding the full bitmap.
@@ -209,7 +219,10 @@ struct Thumb: View {
     var body: some View {
         Group {
             if let image { Image(nsImage: image).resizable().scaledToFit() }
-            else { Rectangle().fill(.quaternary) }
+            else {
+                RoundedRectangle(cornerRadius: 6).fill(.quaternary)
+                    .overlay(Image(systemName: "photo").foregroundStyle(.tertiary))
+            }
         }
         .frame(width: 72, height: 72)
         .task(id: path) {
@@ -227,9 +240,22 @@ struct Thumb: View {
 }
 
 struct PreviewView: View {
-    let path: String
+    let allPaths: [String]
     let query: String
     let searchMode: SearchMode
+    /// Which of allPaths is showing. A plain @State initialized from `startIndex` (rather than
+    /// `startIndex` itself driving everything directly) so Previous/Next can move it without
+    /// needing a new window — the whole point of carrying the full result list through.
+    @State private var index: Int
+    private var path: String { allPaths.indices.contains(index) ? allPaths[index] : (allPaths.first ?? "") }
+
+    init(allPaths: [String], startIndex: Int, query: String, searchMode: SearchMode) {
+        self.allPaths = allPaths
+        self.query = query
+        self.searchMode = searchMode
+        _index = State(initialValue: allPaths.indices.contains(startIndex) ? startIndex : 0)
+    }
+
     @State private var image: NSImage?
     @State private var matches: [TextMatch] = []
     @State private var bgColors: [Color?] = []
@@ -360,7 +386,17 @@ struct PreviewView: View {
         .frame(minWidth: 400, minHeight: 400)
         .navigationTitle((path as NSString).lastPathComponent)
         .toolbar {
-            Text(scanning ? "Finding matches…" : (searchTerms(query, mode: searchMode).isEmpty ? "" : (show ? "\(matches.count) match(es)" : "overlay off")))
+            if allPaths.count > 1 {
+                Button { index -= 1 } label: { Image(systemName: "chevron.left") }
+                    .disabled(index <= 0).help("Previous result (⌘[)").accessibilityLabel("Previous result")
+                    .keyboardShortcut("[", modifiers: .command)
+                Text("\(index + 1) of \(allPaths.count)").foregroundStyle(.secondary).monospacedDigit()
+                Button { index += 1 } label: { Image(systemName: "chevron.right") }
+                    .disabled(index >= allPaths.count - 1).help("Next result (⌘])").accessibilityLabel("Next result")
+                    .keyboardShortcut("]", modifiers: .command)
+                Divider()
+            }
+            Text(scanning ? "Finding matches…" : (searchTerms(query, mode: searchMode).isEmpty ? "" : (show ? plural(matches.count, "match") : "overlay off")))
                 .foregroundStyle(.secondary)
             Toggle("Overlay", isOn: $show)
                 .toggleStyle(.switch).help("Show or hide the overlay (Cmd+Shift+O)")
@@ -373,28 +409,32 @@ struct PreviewView: View {
             // overflowed past a handful of items and the rest silently landed in the hidden
             // ">>" menu, which is why the Background picker (and friends) seemed to vanish.
             Button { showStylePopover = true } label: { Image(systemName: "paintpalette") }
-                .help("Overlay style")
+                .help("Overlay style").accessibilityLabel("Overlay style")
                 .popover(isPresented: $showStylePopover, arrowEdge: .bottom) {
                     let bgBinding = Binding<Color>(get: { bg }, set: { bgHex = $0.hexString })
-                    VStack(alignment: .leading, spacing: 10) {
+                    // Grouped into labelled sections rather than one flat stack of controls —
+                    // it had grown to two color pickers, three auto-match toggles and a whole
+                    // font row with no hierarchy to read it by.
+                    VStack(alignment: .leading, spacing: 14) {
                         if mode == "text" {
-                            HStack {
-                                ColorPicker("Font", selection: txtBinding, supportsOpacity: false)
-                                ColorPicker("Background", selection: bgBinding, supportsOpacity: false)
+                            VStack(alignment: .leading, spacing: 8) {
+                                sectionHeader("Color")
+                                HStack {
+                                    ColorPicker("Text", selection: txtBinding, supportsOpacity: false)
+                                    ColorPicker("Background", selection: bgBinding, supportsOpacity: false)
+                                }
+                                Toggle("Match text color from image", isOn: $autoTextColor)
+                                    .help("Pick up the text's own ink color from the image and use it for the redrawn word; the Text color above is the fallback")
+                                Toggle("Match background from image", isOn: $autoBg)
+                                    .help("Pick up the color immediately around each match and use it as its background; the Background color above is the fallback")
                             }
-                            Toggle("Match text's own color automatically", isOn: $autoTextColor)
-                                .help("Pick up the text's own ink color from the image and use it for the redrawn word; the Font color above is the fallback")
-                            Toggle("Match background color automatically", isOn: $autoBg)
-                                .help("Pick up the color immediately around each match and use it as its background; the Background color above is the fallback")
-                            Toggle("Auto-match an installed font", isOn: $autoFont)
-                                .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font), instead of the Font chosen in Settings")
                             Divider()
                             // Laid out like an ordinary text-editing toolbar (font, point size,
                             // then Bold/Italic toggles) rather than a settings-style option list.
                             // Picking a font or typing a size overrides whatever auto-match/fit
                             // found (and turns auto-match on, if it was off, so the change takes
                             // visible effect immediately); "Auto" in the font menu, or the Reset
-                            // button once either is overridden, goes back to automatic.
+                            // button once anything is overridden, goes back to automatic.
                             let hoveredOrFirstSize: Double = {
                                 let idx = hoverIndex ?? 0
                                 let native = fontSizes.indices.contains(idx) ? fontSizes[idx] : 17
@@ -404,46 +444,73 @@ struct PreviewView: View {
                                 get: { manualSize > 0 ? manualSize : hoveredOrFirstSize },
                                 set: { manualSize = max($0, 1) }
                             )
-                            HStack(spacing: 8) {
-                                Picker("", selection: Binding<String>(
-                                    get: { manualFont },
-                                    set: { manualFont = $0; if !$0.isEmpty { autoFont = true } }
-                                )) {
-                                    Text(detectedFontName.map { "Auto (\($0))" } ?? "Auto").tag("")
-                                    Divider()
-                                    ForEach(candidateFontFamilies(), id: \.self) { Text($0).tag($0) }
-                                }
-                                .labelsHidden().frame(width: 148)
+                            VStack(alignment: .leading, spacing: 8) {
+                                sectionHeader("Font")
+                                Toggle("Match font from image", isOn: $autoFont)
+                                    .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font)")
+                                HStack(spacing: 8) {
+                                    Picker("", selection: Binding<String>(
+                                        get: { manualFont },
+                                        set: { manualFont = $0; if !$0.isEmpty { autoFont = true } }
+                                    )) {
+                                        Text(detectedFontName.map { "Auto (\($0))" } ?? "Auto").tag("")
+                                        Divider()
+                                        ForEach(candidateFontFamilies(), id: \.self) { Text($0).tag($0) }
+                                    }
+                                    .labelsHidden().frame(width: 148)
 
-                                TextField("", value: sizeBinding, format: .number)
-                                    .textFieldStyle(.roundedBorder).frame(width: 38)
-                                    .multilineTextAlignment(.trailing)
-                                Stepper("", value: sizeBinding, in: 1...400).labelsHidden()
-                                Text("pt").font(.caption).foregroundStyle(.secondary)
-                            }
-                            HStack(spacing: 6) {
-                                Toggle(isOn: Binding(get: { weight == "bold" }, set: { weight = $0 ? "bold" : "regular" })) {
-                                    Text("B").bold()
-                                }.toggleStyle(.button).help("Bold")
-                                Toggle(isOn: $italic) {
-                                    Text("I").italic()
-                                }.toggleStyle(.button).help("Italic")
-                                Spacer()
-                                if !manualFont.isEmpty || manualSize > 0 {
-                                    Button("Reset to auto") { manualFont = ""; manualSize = 0 }
-                                        .font(.caption).buttonStyle(.link)
+                                    TextField("", value: sizeBinding, format: .number)
+                                        .textFieldStyle(.roundedBorder).frame(width: 38)
+                                        .multilineTextAlignment(.trailing)
+                                    Stepper("", value: sizeBinding, in: 1...400).labelsHidden()
+                                    Text("pt").font(.caption).foregroundStyle(.secondary)
                                 }
+                                HStack(spacing: 6) {
+                                    Toggle(isOn: Binding(get: { weight == "bold" }, set: { weight = $0 ? "bold" : "regular" })) {
+                                        Text("B").bold()
+                                    }.toggleStyle(.button).help("Bold").accessibilityLabel("Bold")
+                                    Toggle(isOn: $italic) {
+                                        Text("I").italic()
+                                    }.toggleStyle(.button).help("Italic").accessibilityLabel("Italic")
+                                    Spacer()
+                                    if !manualFont.isEmpty || manualSize > 0 || weight == "bold" || italic {
+                                        Button("Reset to auto") {
+                                            manualFont = ""; manualSize = 0; weight = "regular"; italic = false
+                                        }
+                                        .font(.caption).buttonStyle(.link)
+                                        .help("Back to auto-matched font/size, regular weight, no italic")
+                                    }
+                                }
+                            }
+                            Divider()
+                            VStack(alignment: .leading, spacing: 8) {
+                                sectionHeader("Preview")
+                                stylePreview(box: box, text: txt, background: bg)
                             }
                         } else {
-                            ColorPicker("Box", selection: boxBinding, supportsOpacity: false)
+                            VStack(alignment: .leading, spacing: 8) {
+                                sectionHeader("Box")
+                                ColorPicker("Color", selection: boxBinding, supportsOpacity: false)
+                                HStack {
+                                    Text("Fill")
+                                    Slider(value: $opacity, in: 0...0.8)
+                                    Text("\(Int(opacity * 100))%").monospacedDigit().frame(width: 38, alignment: .trailing)
+                                }
+                                Toggle("Outline", isOn: $outline)
+                            }
+                            Divider()
+                            VStack(alignment: .leading, spacing: 8) {
+                                sectionHeader("Preview")
+                                stylePreview(box: box, text: txt, background: bg)
+                            }
                         }
                     }
                     .padding(14).frame(width: 300)
                 }
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } label: {
+                Label("Reveal in Finder", systemImage: "folder")
             }
-            Button("Close") { NSApp.keyWindow?.close() }
+            Button { NSApp.keyWindow?.close() } label: { Label("Close", systemImage: "xmark.circle") }
         }
         .onExitCommand { NSApp.keyWindow?.close() }
         .task(id: path) {
@@ -487,6 +554,40 @@ struct PreviewView: View {
             applyFontOverride()
             Task { await recomputeFontSizes(); recomputeRenderedFontNames() }
         }
+    }
+
+    /// Small all-caps caption used to head each group of controls in the style popover — the
+    /// popover had grown well past the point where one flat stack of rows was readable.
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(.caption2).fontWeight(.semibold).kerning(0.5)
+            .foregroundStyle(.secondary)
+    }
+
+    /// Live swatch at the foot of the style popover, drawn with exactly the settings above it.
+    /// Unlike the Settings window's generic preview it uses this image's real data — the hovered
+    /// (or first) match's text, its sampled colors and its auto-matched font — so the popover
+    /// shows what the change will actually look like here, without hunting for the match on the
+    /// page behind the popover.
+    private func stylePreview(box: Color, text textColor: Color, background: Color) -> some View {
+        let i = hoverIndex ?? 0
+        let sample = matches.indices.contains(i) ? matches[i].text : "Screen Active"
+        let size = CGSize(width: 190, height: 30)
+        return ZStack {
+            RoundedRectangle(cornerRadius: 6).fill(.gray.opacity(0.25))
+            MatchView(text: sample, size: size, mode: mode,
+                      box: box, textColor: textColor, opacity: opacity, outline: outline,
+                      design: design, weight: weight,
+                      sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: background,
+                      autoBackground: autoBg,
+                      matchedFont: matchedFonts.indices.contains(i) ? matchedFonts[i] : nil,
+                      autoFont: autoFont,
+                      fontSize: min(displayFontSize(i, scale: displayScale), size.height),
+                      renderedFontName: renderedFontNames.indices.contains(i) ? renderedFontNames[i] : nil,
+                      sampledTextColor: textColors.indices.contains(i) ? textColors[i] : nil,
+                      autoTextColor: autoTextColor, italic: italic)
+        }
+        .frame(maxWidth: .infinity).frame(height: 44)
     }
 
     /// Auto-matches the whole image's text to one closest-looking installed font at once (see
@@ -571,8 +672,9 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                TextField("Search text inside images (FTS5: foo AND \"exact phrase\" bar*)", text: $m.query)
+                TextField("Search text inside images", text: $m.query)
                     .textFieldStyle(.roundedBorder).onSubmit { m.search() }
+                    .help("Type any text and press Return. Advanced: AND / OR / NOT, \"exact phrase\", word* — see the FTS5 query syntax.")
                 Picker("", selection: $m.searchMode) {
                     Text("Phrase").tag(SearchMode.phrase)
                     Text("Any word").tag(SearchMode.words)
@@ -584,26 +686,44 @@ struct ContentView: View {
                 Button("Add files…") { pick(dir: false) { m.add(files: $0) } }
                 Button { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) } label: {
                     Image(systemName: "gearshape")
-                }.help("Settings (highlight color)")
+                }.help("Settings (highlight color)").accessibilityLabel("Settings")
             }.padding(10)
             Divider()
-            List(m.results, selection: $m.selection) { hit in
-                HStack(spacing: 10) {
-                    Thumb(path: hit.path)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text((hit.path as NSString).lastPathComponent).fontWeight(.medium)
-                        Text(hit.snippet.isEmpty ? "(added manually)" : hit.snippet)
-                            .font(.callout).foregroundStyle(.secondary).lineLimit(2)
-                        Text((hit.path as NSString).deletingLastPathComponent)
-                            .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+            if m.results.isEmpty {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 44)).foregroundStyle(.tertiary)
+                    Text(m.query.isEmpty ? "No images indexed yet" : "No matches for “\(m.query)”")
+                        .font(.title3).foregroundStyle(.secondary)
+                    if m.query.isEmpty {
+                        Text("Index a folder of screenshots to start searching their text.")
+                            .font(.callout).foregroundStyle(.tertiary)
+                        Button("Index folder…") { pick(dir: true) { m.index(folder: $0[0]) } }
+                            .buttonStyle(.borderedProminent).padding(.top, 4)
                     }
                     Spacer()
-                    Button { openWindow(id: "preview", value: PreviewRequest(path: hit.path, query: m.query, mode: m.searchMode)) } label: { Image(systemName: "eye") }
-                        .buttonStyle(.borderless).help("View full size")
                 }
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) { openWindow(id: "preview", value: PreviewRequest(path: hit.path, query: m.query, mode: m.searchMode)) }
-                .tag(hit.id)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(m.results, selection: $m.selection) { hit in
+                    HStack(spacing: 10) {
+                        Thumb(path: hit.path)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text((hit.path as NSString).lastPathComponent).fontWeight(.medium)
+                            Text(hit.snippet.isEmpty ? "(added manually)" : hit.snippet)
+                                .font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                            Text((hit.path as NSString).deletingLastPathComponent)
+                                .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                        }
+                        Spacer()
+                        Button { openPreview(hit) } label: { Image(systemName: "eye") }
+                            .buttonStyle(.borderless).help("View full size").accessibilityLabel("View full size")
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { openPreview(hit) }
+                    .tag(hit.id)
+                }
             }
             Divider()
             HStack {
@@ -626,6 +746,15 @@ struct ContentView: View {
         .sheet(isPresented: $showMiro) { MiroSheet(m: m, isPresented: $showMiro) }
     }
 
+    /// Opens the preview on `hit`, but hands it the whole current result list so its toolbar can
+    /// page Previous/Next through the other results without coming back here.
+    private func openPreview(_ hit: Hit) {
+        let paths = m.results.map(\.path)
+        openWindow(id: "preview", value: PreviewRequest(path: hit.path, query: m.query, mode: m.searchMode,
+                                                        allPaths: paths,
+                                                        startIndex: paths.firstIndex(of: hit.path) ?? 0))
+    }
+
     private func pick(dir: Bool, _ done: @escaping ([URL]) -> Void) {
         let p = NSOpenPanel()
         p.canChooseDirectories = dir; p.canChooseFiles = !dir; p.allowsMultipleSelection = !dir
@@ -636,23 +765,66 @@ struct ContentView: View {
 struct MiroSheet: View {
     @ObservedObject var m: Model
     @Binding var isPresented: Bool
+    /// "Create a new board" vs "add to an existing one" — previously both fields were always
+    /// visible with the board-name one conditionally disabled, which left the user to infer the
+    /// relationship between them.
+    @State private var useExistingBoard = false
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
                 MiroBadge(size: 28)
                 Text("Export to Miro").font(.headline)
             }
-            SecureField("Miro access token (boards:read, boards:write) — saved in Keychain", text: $m.token)
-            TextField("Existing board ID (leave empty to create a new board)", text: $m.boardID)
-            TextField("New board name", text: $m.boardName).disabled(!m.boardID.isEmpty)
-            Text("\(m.selection.count) item(s): images plus their OCR snippets as sticky notes.")
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Access token").font(.subheadline)
+                    Spacer()
+                    Link("Where do I get one?", destination: URL(string: "https://miro.com/app/settings/user-profile/apps")!)
+                        .font(.caption)
+                }
+                SecureField("Miro access token", text: $m.token)
+                Text("Needs the boards:read and boards:write scopes. Saved in your Keychain, not in the app.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Picker("", selection: $useExistingBoard) {
+                Text("Create a new board").tag(false)
+                Text("Add to an existing board").tag(true)
+            }
+            .pickerStyle(.segmented).labelsHidden()
+            .onChange(of: useExistingBoard) { existing in if !existing { m.boardID = "" } }
+
+            if useExistingBoard {
+                TextField("Board ID", text: $m.boardID)
+            } else {
+                TextField("New board name", text: $m.boardName)
+            }
+
+            Text("\(plural(m.selection.count, "item")): images plus their OCR snippets as sticky notes.")
                 .font(.caption).foregroundStyle(.secondary)
+
+            if let err = m.exportError {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(err).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             HStack {
+                if m.busy { ProgressView().controlSize(.small); Text("Exporting…").font(.caption).foregroundStyle(.secondary) }
                 Spacer()
                 Button("Cancel") { isPresented = false }
-                Button("Export") { isPresented = false; m.exportSelection() }
-                    .keyboardShortcut(.defaultAction).disabled(m.token.isEmpty)
+                // Stays open while exporting, so progress and any failure land here rather than
+                // in a status line behind the sheet; dismisses itself once a board link arrives.
+                Button("Export") { m.exportSelection() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(m.token.isEmpty || m.busy)
             }
-        }.padding(20).frame(width: 480)
+        }
+        .padding(20).frame(width: 480)
+        .onChange(of: m.link) { link in if link != nil { isPresented = false } }
     }
 }

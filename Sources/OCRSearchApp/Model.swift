@@ -26,6 +26,9 @@ final class Model: ObservableObject {
     @Published var boardID = ""
     @Published var boardName = "OCR search"
     @Published var link: URL?
+    /// Set when an export fails, so the export sheet can show the reason inline instead of the
+    /// user only finding out from a status line in a window that's now behind the sheet.
+    @Published var exportError: String?
     @Published var token: String = Keychain.get("miro-token") ?? "" {
         didSet { Keychain.set("miro-token", token) }
     }
@@ -62,15 +65,23 @@ final class Model: ObservableObject {
     func exportSelection() {
         let items = results.filter { selection.contains($0.path) }.map { (path: $0.path, snippet: $0.snippet) }
         guard !items.isEmpty else { return }
-        guard !token.isEmpty else { status = "Enter your Miro token first."; return }
-        busy = true; link = nil; status = "Exporting \(plural(items.count, "item")) to Miro…"
+        guard !token.isEmpty else {
+            status = "Enter your Miro token first."; exportError = "Enter your Miro token first."; return
+        }
+        busy = true; link = nil; exportError = nil; status = "Exporting \(plural(items.count, "item")) to Miro…"
         let (tok, id, name) = (token, boardID.trimmingCharacters(in: .whitespaces), boardName)
         Task.detached {
             do {
                 let l = try exportToMiro(items: items, token: tok, boardID: id.isEmpty ? nil : id,
                                          boardName: name, log: { _ in })
                 await MainActor.run { self.link = URL(string: l); self.status = "Exported \(plural(items.count, "item"))."; self.busy = false }
-            } catch { await MainActor.run { self.status = "Miro export failed: \(error.localizedDescription)"; self.busy = false } }
+            } catch {
+                await MainActor.run {
+                    self.status = "Miro export failed: \(error.localizedDescription)"
+                    self.exportError = error.localizedDescription
+                    self.busy = false
+                }
+            }
         }
     }
 
