@@ -7,9 +7,9 @@
 	<key>CFBundleIdentifier</key>
 	<string>com.sir.ocr-search</string>
 	<key>CFBundleName</key>
-	<string>OCR Search</string>
+	<string>Miro-ocr-search</string>
 	<key>CFBundleDisplayName</key>
-	<string>OCR Search</string>
+	<string>Miro-ocr-search</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

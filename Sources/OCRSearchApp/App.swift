@@ -30,6 +30,9 @@ let watermarkImage: NSImage? = {
 let watermarkWidthFraction: CGFloat = 0.0465
 let watermarkRightMarginFraction: CGFloat = 0.0155
 let watermarkBottomMarginFraction: CGFloat = 0.0068
+/// Deliberately faint: the badge marks the image without competing with the text underneath
+/// it, which is the part the user is actually reading.
+let watermarkOpacity: Double = 0.2
 
 /// Small rounded Miro logo badge, marking the app's Miro-related actions (export button, the
 /// export sheet, "open board"). Square, dark card with the wordmark baked in — looks right at
@@ -367,7 +370,7 @@ struct PreviewView: View {
                                 Image(nsImage: watermarkImage).resizable().scaledToFit()
                                     .frame(width: ww, height: wh)
                                     .clipShape(RoundedRectangle(cornerRadius: wh * 0.2))
-                                    .opacity(0.85)
+                                    .opacity(watermarkOpacity)
                                     .allowsHitTesting(false)
                                     .position(x: geo.size.width * (1 - watermarkRightMarginFraction) - ww / 2,
                                               y: geo.size.height * (1 - watermarkBottomMarginFraction) - wh / 2)
