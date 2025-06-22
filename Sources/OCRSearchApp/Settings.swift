@@ -31,6 +31,13 @@ enum HL {
     static let autoFont = "highlightAutoFont"    // auto-match an installed font instead of using design
     static let manualFont = "highlightManualFont"  // overrides the auto-detected family; "" = use it as detected
     static let manualSize = "highlightManualSize"  // fixed on-screen pt size for every match; 0 = auto-fit
+    /// Display points per native image pixel at the moment `manualSize` was last set. manualSize
+    /// is in on-screen points (that is what the toolbar field shows and edits), which says
+    /// nothing on its own about how big the text should be in the image's own pixels — the same
+    /// "24 pt" means a very different thing on a 1356px-wide screenshot shown at 40% than at
+    /// 100%. Recording the scale it was typed at lets the exporter convert it back to native
+    /// pixels and reproduce exactly what the user was looking at. 0 = never set.
+    static let manualSizeScale = "highlightManualSizeScale"
     static let italic = "highlightItalic"          // draw matched words in italic
     static let defaultBox = "#FFD60A"
     static let defaultText = "#000000"
@@ -52,7 +59,7 @@ private extension Font.Design {
     }
 }
 
-private func nsFont(size: CGFloat, weight: Font.Weight, design: Font.Design) -> NSFont {
+func nsFont(size: CGFloat, weight: Font.Weight, design: Font.Design) -> NSFont {
     let nsWeight: NSFont.Weight = { switch weight { case .medium: return .medium
         case .bold: return .bold; default: return .regular } }()
     let base = NSFont.systemFont(ofSize: size, weight: nsWeight)

@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ImageIO
+import UniformTypeIdentifiers
 import OCRSearchCore
 
 /// Sources/assets/logo.png, resolved relative to this source file's own location (not the
@@ -64,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct OCRSearchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
-        WindowGroup("OCR Image Search") { ContentView().frame(minWidth: 760, minHeight: 520) }
+        WindowGroup("Miro-ocr-search") { ContentView().frame(minWidth: 760, minHeight: 520) }
         // Full-size viewer: one window per image, closable with the red button, Cmd+W or Esc.
         WindowGroup("Preview", id: "preview", for: PreviewRequest.self) { $req in
             if let req { PreviewView(allPaths: req.allPaths, startIndex: req.startIndex, query: req.query, searchMode: req.mode) }
@@ -377,9 +378,9 @@ struct PreviewView: View {
                             }
                         }
                         .coordinateSpace(name: "preview")
-                        .onAppear { displayScale = scale }
-                        .onChange(of: geo.size) { _ in displayScale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1 }
-                        .onChange(of: pixelSize) { _ in displayScale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1 }
+                        .onAppear { setDisplayScale(scale) }
+                        .onChange(of: geo.size) { _ in setDisplayScale(pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1) }
+                        .onChange(of: pixelSize) { _ in setDisplayScale(pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1) }
                     })
                     .padding(12)
             }
@@ -510,6 +511,9 @@ struct PreviewView: View {
                     }
                     .padding(14).frame(width: 300)
                 }
+            Button(action: saveImage) { Label("Save Image…", systemImage: "square.and.arrow.down") }
+                .keyboardShortcut("s")
+                .help("Write this image, with its overlays and watermark, to a PNG file")
             Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } label: {
                 Label("Reveal in Finder", systemImage: "folder")
             }
@@ -557,6 +561,38 @@ struct PreviewView: View {
             applyFontOverride()
             Task { await recomputeFontSizes(); recomputeRenderedFontNames() }
         }
+    }
+
+    /// Tracks how big the image is being drawn, and persists it (HL.manualSizeScale) so the
+    /// exporter can translate the point-based settings — a manually typed font size, the match
+    /// box padding, the outline width — back into the image's own pixels. Kept in step with the
+    /// window rather than snapshotted when a size is typed, because those settings are in points
+    /// and so their meaning genuinely changes as the window resizes: a fixed 24pt covers twice as
+    /// much of the image at 40% zoom as at 80%. Syncing it means an export always reproduces what
+    /// the window is showing right now.
+    private func setDisplayScale(_ s: CGFloat) {
+        displayScale = s
+        if s > 0 { UserDefaults.standard.set(Double(s), forKey: HL.manualSizeScale) }
+    }
+
+    /// Writes what is on screen — image, overlays, watermark — to a PNG the user picks.
+    /// Hands the renderer the window's already-computed matches, sampled colours, matched font
+    /// and fitted sizes instead of letting it redo the work: that is a second or more of OCR per
+    /// image, and reusing them also guarantees the file is exactly what is being looked at rather
+    /// than a fresh pass that could resolve a detail differently.
+    private func saveImage() {
+        let name = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(name)-overlay.png"
+        panel.allowedContentTypes = [.png]
+        panel.message = "Saved with the overlays and watermark as shown, at the image's full resolution."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let plan = RenderPlan(pixelSize: pixelSize, matches: show ? matches : [],
+                              bgColors: bgColors, textColors: textColors,
+                              matchedFonts: matchedFonts, fontSizes: fontSizes)
+        guard let data = renderExportPNG(path: path, query: query, searchMode: searchMode,
+                                         style: OverlayStyle.current(), plan: plan) else { return }
+        try? data.write(to: url)
     }
 
     /// Small all-caps caption used to head each group of controls in the style popover — the
@@ -740,7 +776,8 @@ struct ContentView: View {
                 Menu("Export to file") {
                     Button("CSV (path + OCR text)…") { m.exportToFile(.csv) }
                     Button("Markdown…") { m.exportToFile(.markdown) }
-                    Button("Copy images to folder…") { m.exportToFile(.folder) }
+                    Divider()
+                    Button("Images with overlay…") { m.exportToFile(.images) }
                 }.disabled(m.selection.isEmpty || m.busy).fixedSize()
                 Button { showMiro = true } label: { MiroBadge(size: 14); Text("Export \(m.selection.count) to Miro…") }
                     .disabled(m.selection.isEmpty || m.busy).keyboardShortcut(.defaultAction)

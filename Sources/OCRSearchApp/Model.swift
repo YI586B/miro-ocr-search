@@ -70,9 +70,16 @@ final class Model: ObservableObject {
         }
         busy = true; link = nil; exportError = nil; status = "Exporting \(plural(items.count, "item")) to Miro…"
         let (tok, id, name) = (token, boardID.trimmingCharacters(in: .whitespaces), boardName)
+        let (q, sm) = (query, searchMode)
+        let style = OverlayStyle.current()
         Task.detached {
             do {
-                let l = try exportToMiro(items: items, token: tok, boardID: id.isEmpty ? nil : id,
+                // A board full of untouched screenshots would lose the very thing the search
+                // found, so what goes up is the composited image — the same render the folder
+                // export writes — staged in a temp directory the upload reads from. Anything that
+                // fails to render still goes up as its original rather than being dropped.
+                let staged = renderForUpload(items, query: q, searchMode: sm, style: style)
+                let l = try exportToMiro(items: staged, token: tok, boardID: id.isEmpty ? nil : id,
                                          boardName: name, log: { _ in })
                 await MainActor.run { self.link = URL(string: l); self.status = "Exported \(plural(items.count, "item"))."; self.busy = false }
             } catch {
@@ -87,7 +94,7 @@ final class Model: ObservableObject {
 
     // MARK: export to file
 
-    enum FileFormat { case csv, markdown, folder }
+    enum FileFormat { case csv, markdown, images }
 
     private func fullText(_ hit: Hit) -> String {
         (try? Database(path: dbPath).text(of: hit.path))
@@ -119,22 +126,68 @@ final class Model: ObservableObject {
                 }
                 try out.write(to: url, atomically: true, encoding: .utf8)
                 status = "Saved \(hits.count) item(s) to \(url.lastPathComponent)"
-            case .folder:
+            case .images:
                 let panel = NSOpenPanel()
                 panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
-                panel.prompt = "Copy here"
+                panel.prompt = "Export here"
+                panel.message = "Choose where to write the images, with their overlays and watermark."
                 guard panel.runModal() == .OK, let dir = panel.url else { return }
-                let fm = FileManager.default
-                for h in hits {
-                    let src = URL(fileURLWithPath: h.path)
-                    var dest = dir.appendingPathComponent(src.lastPathComponent), n = 1
-                    while fm.fileExists(atPath: dest.path) {
-                        dest = dir.appendingPathComponent("\(src.deletingPathExtension().lastPathComponent)-\(n).\(src.pathExtension)"); n += 1
-                    }
-                    try fm.copyItem(at: src, to: dest)
-                }
-                status = "Copied \(hits.count) image(s) to \(dir.lastPathComponent)"
+                renderImages(hits, into: dir)
             }
         } catch { status = "Export failed: \(error.localizedDescription)" }
+    }
+
+    /// Writes each selected image into `dir` with its overlays and watermark composited in, at
+    /// the image's own resolution (see renderExportPNG). Runs off the main actor because each
+    /// image is a fresh OCR pass plus colour sampling and font matching — a second or two apiece,
+    /// which would otherwise freeze the window for the length of the whole batch.
+    private func renderImages(_ hits: [Hit], into dir: URL) {
+        busy = true; status = "Rendering \(plural(hits.count, "image"))…"
+        let jobs = hits.map(\.path)
+        let (q, sm) = (query, searchMode)
+        let style = OverlayStyle.current()
+        Task.detached(priority: .userInitiated) {
+            var written = 0, failed = 0
+            for (i, path) in jobs.enumerated() {
+                await MainActor.run { self.status = "Rendering \(i + 1) of \(jobs.count)…" }
+                guard let data = renderExportPNG(path: path, query: q, searchMode: sm, style: style) else {
+                    failed += 1; continue
+                }
+                // Always .png, whatever the source was; see renderExportPNG. The suffix keeps an
+                // export next to its original from silently overwriting it when the source was
+                // already a PNG, which a plain extension swap would do.
+                let base = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+                var dest = dir.appendingPathComponent("\(base)-overlay.png"), n = 1
+                while FileManager.default.fileExists(atPath: dest.path) {
+                    dest = dir.appendingPathComponent("\(base)-overlay-\(n).png"); n += 1
+                }
+                do { try data.write(to: dest); written += 1 } catch { failed += 1 }
+            }
+            let (w, f) = (written, failed)
+            await MainActor.run {
+                self.status = f == 0
+                    ? "Exported \(plural(w, "image")) to \(dir.lastPathComponent)"
+                    : "Exported \(plural(w, "image")) to \(dir.lastPathComponent), \(f) failed"
+                self.busy = false
+            }
+        }
+    }
+}
+
+/// Composites each item for upload and returns the same list pointing at the rendered files.
+/// Writes into a per-export temp directory rather than alongside the originals — these are
+/// transport artefacts, not something the user asked to keep, and the OS reclaims them.
+private func renderForUpload(_ items: [(path: String, snippet: String)], query: String,
+                             searchMode: SearchMode, style: OverlayStyle) -> [(path: String, snippet: String)] {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ocrsearch-export-\(UUID().uuidString)")
+    guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil
+    else { return items }
+    return items.map { item in
+        let name = URL(fileURLWithPath: item.path).deletingPathExtension().lastPathComponent
+        let dest = dir.appendingPathComponent("\(name).png")
+        guard let data = renderExportPNG(path: item.path, query: query, searchMode: searchMode, style: style),
+              (try? data.write(to: dest)) != nil else { return item }
+        return (path: dest.path, snippet: item.snippet)
     }
 }
