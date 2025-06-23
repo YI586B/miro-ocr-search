@@ -285,23 +285,34 @@ private func drawMatchText(_ text: String, in box: CGRect, size: CGFloat, ink: C
     ctx.restoreGState()
 }
 
-/// The same bottom-right badge the preview stamps on every image, at the same fractions of the
-/// image's own size — see watermarkImage — so the export matches what was on screen.
+/// The same bottom-right badge the preview stamps on every image, at the same pixel size and
+/// offsets — see watermarkPixelSize — so the export matches what was on screen.
+///
+/// Built here rather than blitted from a file: the background is a translucent rounded rectangle
+/// and the wordmark is vector art rasterised straight into this context at its final size, which
+/// is what keeps the badge's edges and letterforms clean on a full-resolution image instead of
+/// upscaling a small bitmap.
 private func drawWatermark(ctx: CGContext, width: CGFloat, height: CGFloat) {
-    guard let mark = watermarkImage,
-          let cg = mark.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
-    let ww = width * watermarkWidthFraction
-    let wh = ww * (mark.size.height / mark.size.width)
-    let rect = CGRect(x: width * (1 - watermarkRightMarginFraction) - ww,
-                      y: height * watermarkBottomMarginFraction,
+    let ww = watermarkPixelSize.width, wh = watermarkPixelSize.height
+    let rect = CGRect(x: width - watermarkRightMargin - ww, y: watermarkBottomMargin,
                       width: ww, height: wh)
+    guard rect.minX > 0, rect.maxY < height else { return }   // image too small to carry the badge
+
     ctx.saveGState()
     ctx.setAlpha(watermarkOpacity)
-    let path = CGPath(roundedRect: rect, cornerWidth: wh * 0.2, cornerHeight: wh * 0.2, transform: nil)
-    ctx.addPath(path)
-    ctx.clip()
-    ctx.draw(cg, in: rect)
+    let r = wh * watermarkCornerFraction
+    ctx.addPath(CGPath(roundedRect: rect, cornerWidth: r, cornerHeight: r, transform: nil))
+    ctx.setFillColor(cgColor(watermarkBackground))
+    ctx.fillPath()
     ctx.restoreGState()
+
+    // Centred on both axes: the SVG's box wraps the wordmark exactly, so centring the box centres
+    // the letters.
+    guard let art = watermarkArtwork, art.size.width > 0 else { return }
+    let mw = ww * watermarkWordmarkWidthFraction
+    let mh = mw * (art.size.height / art.size.width)
+    art.draw(in: CGRect(x: rect.midX - mw / 2, y: rect.midY - mh / 2, width: mw, height: mh),
+             from: .zero, operation: .sourceOver, fraction: watermarkOpacity)
 }
 
 extension Array {

@@ -15,25 +15,46 @@ let appLogo: NSImage? = {
     return NSImage(contentsOfFile: url.path)
 }()
 
-/// Sources/assets/watermark.jpeg, resolved the same way as appLogo. Stamped onto every opened
-/// preview's bottom-right corner (see PreviewView) — size and position measured directly off a
-/// reference screenshot that already carried this watermark (miro-files/IMG_0849.PNG): the badge
-/// there was 63×34px in a 1356×2948 image (4.65% of width, 1.15% of height), 21px/1.55% in from
-/// the right edge and 20px/0.68% up from the bottom — matched here as fractions of the displayed
-/// image so it scales the same way regardless of window size.
-let watermarkImage: NSImage? = {
+/// The miro badge stamped on the bottom-right of every opened image (see PreviewView) and on
+/// every exported one (see drawWatermark) — drawn rather than loaded, from the wordmark in
+/// Sources/assets/watermark.svg, resolved the same way as appLogo.
+///
+/// Vector, not a bitmap: NSImage keeps an SVG as an _NSSVGImageRep and rasterises it at whatever
+/// size it is drawn at, so the same artwork is sharp in a scaled-down preview and in a
+/// full-resolution export. The bitmap it replaces could only be upscaled.
+let watermarkArtwork: NSImage? = {
     let url = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .deletingLastPathComponent()
-        .appendingPathComponent("assets/watermark.jpeg")
-    return NSImage(contentsOfFile: url.path)
+        .appendingPathComponent("assets/watermark.svg")
+    return NSImage(contentsOf: url)
 }()
-let watermarkWidthFraction: CGFloat = 0.0465
-let watermarkRightMarginFraction: CGFloat = 0.0155
-let watermarkBottomMarginFraction: CGFloat = 0.0068
-/// Deliberately faint: the badge marks the image without competing with the text underneath
-/// it, which is the part the user is actually reading.
-let watermarkOpacity: Double = 0.2
+
+/// Badge geometry in the image's own pixels, measured off a reference screenshot that already
+/// carried this watermark (miro-files/IMG_0849.PNG): a 63x34 badge sitting 21px in from the right
+/// edge and 20px up from the bottom.
+///
+/// Fixed pixels, not fractions of the image: the badge is meant to be that size, full stop, the
+/// way a real watermark is stamped at one size rather than growing with the canvas. (It was
+/// fractional before, which happened to give exactly 63x34 on the 1356px-wide reference and
+/// something smaller on every other image.) The trade-off is that on a much larger image the
+/// badge is proportionally smaller — deliberate, but the numbers to change are right here.
+let watermarkPixelSize = CGSize(width: 63, height: 34)
+let watermarkRightMargin: CGFloat = 21
+let watermarkBottomMargin: CGFloat = 20
+/// Corner rounding as a fraction of the badge's height, and the share of the badge's width the
+/// wordmark spans — both taken from the reference badge, which leaves about 16% padding either
+/// side of the wordmark. The wordmark is then centred on both axes, unlike the reference, where
+/// it sat noticeably high (24% clearance above, 31% below).
+let watermarkCornerFraction: CGFloat = 0.2
+let watermarkWordmarkWidthFraction: CGFloat = 0.68
+/// 50% grey. The badge lands on screenshots of any colour, so it is translucent rather than a
+/// solid chip.
+let watermarkBackground = Color(white: 0.5, opacity: 0.5)
+/// Applied to the badge as a whole, on top of the translucency already in watermarkBackground.
+/// The badge carries its own 50% now, so this stays at 1 — it is the single knob for fading the
+/// whole thing, wordmark included, without touching the background colour.
+let watermarkOpacity: Double = 1
 
 /// Small rounded Miro logo badge, marking the app's Miro-related actions (export button, the
 /// export sheet, "open board"). Square, dark card with the wordmark baked in — looks right at
@@ -363,19 +384,24 @@ struct PreviewView: View {
                                               y: min(hoverPoint.y + 70, geo.size.height - 60))
                             }
                             // Stamped on every opened image, independent of search matches/overlay
-                            // state -- see watermarkImage's doc comment for where the size/position
-                            // fractions came from.
-                            if let watermarkImage {
-                                let ww = geo.size.width * watermarkWidthFraction
-                                let wh = ww * (watermarkImage.size.height / watermarkImage.size.width)
-                                Image(nsImage: watermarkImage).resizable().scaledToFit()
-                                    .frame(width: ww, height: wh)
-                                    .clipShape(RoundedRectangle(cornerRadius: wh * 0.2))
-                                    .opacity(watermarkOpacity)
-                                    .allowsHitTesting(false)
-                                    .position(x: geo.size.width * (1 - watermarkRightMarginFraction) - ww / 2,
-                                              y: geo.size.height * (1 - watermarkBottomMarginFraction) - wh / 2)
+                            // state. Sized and placed in the image's own pixels and then scaled to
+                            // the window, so the preview shows the badge at the same size relative
+                            // to the image that an export writes -- see watermarkPixelSize.
+                            let ww = watermarkPixelSize.width * scale
+                            let wh = watermarkPixelSize.height * scale
+                            ZStack {
+                                RoundedRectangle(cornerRadius: wh * watermarkCornerFraction)
+                                    .fill(watermarkBackground)
+                                if let watermarkArtwork {
+                                    Image(nsImage: watermarkArtwork).resizable().scaledToFit()
+                                        .frame(width: ww * watermarkWordmarkWidthFraction)
+                                }
                             }
+                            .frame(width: ww, height: wh)
+                            .opacity(watermarkOpacity)
+                            .allowsHitTesting(false)
+                            .position(x: geo.size.width - watermarkRightMargin * scale - ww / 2,
+                                      y: geo.size.height - watermarkBottomMargin * scale - wh / 2)
                         }
                         .coordinateSpace(name: "preview")
                         .onAppear { setDisplayScale(scale) }
