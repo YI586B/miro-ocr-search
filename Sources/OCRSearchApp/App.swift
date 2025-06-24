@@ -4,14 +4,19 @@ import ImageIO
 import UniformTypeIdentifiers
 import OCRSearchCore
 
-/// Sources/assets/logo.png, resolved relative to this source file's own location (not the
-/// process's current working directory) so it's found the same way regardless of how the app
-/// was launched.
+/// Sources/assets/icon-1024.png — the composed app icon (see Scripts/make-icon.swift), resolved
+/// relative to this source file's own location (not the process's current working directory) so
+/// it's found the same way regardless of how the app was launched. Used for the Dock icon at
+/// runtime and for MiroBadge, so both match the icon the bundle ships.
+///
+/// Not logo.png, which despite appearances is fully opaque: its "transparent" background is a
+/// checkerboard painted into the pixels, so it renders as a literal checkered square anywhere it
+/// is drawn.
 let appLogo: NSImage? = {
     let url = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()   // App.swift -> Sources/OCRSearchApp/
         .deletingLastPathComponent()   // -> Sources/
-        .appendingPathComponent("assets/logo.png")
+        .appendingPathComponent("assets/icon-1024.png")
     return NSImage(contentsOfFile: url.path)
 }()
 
@@ -30,9 +35,10 @@ let watermarkArtwork: NSImage? = {
     return NSImage(contentsOf: url)
 }()
 
-/// Badge geometry in the image's own pixels, measured off a reference screenshot that already
-/// carried this watermark (miro-files/IMG_0849.PNG): a 63x34 badge sitting 21px in from the right
-/// edge and 20px up from the bottom.
+/// Badge geometry in the image's own pixels: a 63x34 badge sitting 20px in from the right edge
+/// and 20px up from the bottom. The size and the bottom offset are what the reference screenshot
+/// that already carried this watermark uses (miro-files/IMG_0849.PNG); its right offset measured
+/// 21px, squared off to 20 here so the badge is inset equally on both edges.
 ///
 /// Fixed pixels, not fractions of the image: the badge is meant to be that size, full stop, the
 /// way a real watermark is stamped at one size rather than growing with the canvas. (It was
@@ -40,7 +46,7 @@ let watermarkArtwork: NSImage? = {
 /// something smaller on every other image.) The trade-off is that on a much larger image the
 /// badge is proportionally smaller — deliberate, but the numbers to change are right here.
 let watermarkPixelSize = CGSize(width: 63, height: 34)
-let watermarkRightMargin: CGFloat = 21
+let watermarkRightMargin: CGFloat = 20
 let watermarkBottomMargin: CGFloat = 20
 /// Corner rounding as a fraction of the badge's height, and the share of the badge's width the
 /// wordmark spans — both taken from the reference badge, which leaves about 16% padding either
@@ -65,7 +71,6 @@ struct MiroBadge: View {
         Group {
             if let appLogo {
                 Image(nsImage: appLogo).resizable().scaledToFit()
-                    .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
             }
         }
         .frame(width: size, height: size)

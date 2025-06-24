@@ -9,6 +9,8 @@ macOS Swift package: OCR images with Apple Vision, search them with SQLite FTS5,
 - Sources/OCRSearchApp/Render.swift: composites image + overlays + watermark at native resolution for export (OverlayStyle, RenderPlan, renderExportPNG)
 - miro-files/: 16 iPhone battery-usage screenshots used as test data
 - run-app.command: build release + launch the app
+- make-icons.sh + Scripts/make-icon.swift: regenerate AppIcon.iconset / AppIcon.icns / icon-1024.png from watermark.svg (build-app.sh only copies the .icns)
+- Scripts/verify-watermark.swift <renderedDir> <sourceDir>: checks the watermark badge in exported images (63x34, 20px margins, centred)
 
 ## Build / run
     swift build -c release 2>&1 | grep -E "error|Build complete"
@@ -17,7 +19,9 @@ macOS Swift package: OCR images with Apple Vision, search them with SQLite FTS5,
 
 ## State
 - Verified on the Mac: CLI index + search work on miro-files (16/16 indexed).
-- Image export verified by rendering miro-files/IMG_0915.PNG and inspecting the output: text mode, box mode, bold/italic, manual size, watermark.
+- Image export verified by rendering miro-files/IMG_0915.PNG and inspecting the output: text mode, box mode, bold/italic, manual size.
+- Watermark verified across all 17 miro-files: badge exactly 63x34 at 20px right/bottom margins, wordmark centred.
+- Sources/assets/logo.png and watermark.jpeg are unused: logo.png is fully opaque (its "transparency" is a painted checkerboard), so the icon and the in-app badge come from watermark.svg instead.
 - Written but NOT yet compiled/tested: Miro export (untested against real API; needs a Miro token).
 - Index DB: ~/Library/Application Support/ocrsearch/index.db. Miro token is stored in the Keychain by the app, or MIRO_TOKEN for the CLI.
 
