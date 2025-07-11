@@ -477,7 +477,22 @@ struct PreviewView: View {
                             }()
                             let sizeBinding = Binding<Double>(
                                 get: { manualSize > 0 ? manualSize : hoveredOrFirstSize },
-                                set: { manualSize = max($0, 1) }
+                                // A TextField(value:) commits whatever it is currently showing
+                                // every time it loses focus, whether or not the user typed
+                                // anything -- and while the size is automatic, what it shows is
+                                // the auto-fitted size. Writing that straight through silently
+                                // turned "auto" into a manual override pinned to one match on one
+                                // image, which then never adapted again: the font size looked
+                                // stuck, and auto-fit looked broken. So a value that matches what
+                                // auto is already offering is not an override; only a value the
+                                // user actually changed is. (This was found in the wild as a
+                                // stored override of exactly 17pt -- the placeholder this field
+                                // falls back to before anything has been fitted.)
+                                set: { typed in
+                                    let v = max(typed, 1)
+                                    guard manualSize > 0 || abs(v - hoveredOrFirstSize) >= 0.5 else { return }
+                                    manualSize = v
+                                }
                             )
                             VStack(alignment: .leading, spacing: 8) {
                                 sectionHeader("Font")
