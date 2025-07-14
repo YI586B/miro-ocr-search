@@ -216,3 +216,66 @@ func effectiveFontSize(for text: String, weight: Font.Weight, design: Font.Desig
 func renderableFontName(family: String, bold: Bool) -> String {
     nsFont(family: family, bold: bold, size: 12)?.fontName ?? family
 }
+
+// MARK: - fitting to ink measured off the image
+
+/// The tight bounding box of `text`'s glyph outlines in `font`, relative to the text's drawing
+/// origin on the baseline: `minX` is the left side bearing, `minY` is how far the lowest ink falls
+/// below the baseline (negative when the string has descenders), `height` is the full ink height.
+///
+/// Glyph path bounds, deliberately, not the font's line metrics. Line metrics describe the
+/// abstract box a typesetter reserves for a line — ascender to descender, plus leading — and
+/// different families reserve very different amounts of it for the same visible letters. What has
+/// to line up here is ink against ink measured off a screenshot, so the measurement has to be of
+/// the ink.
+func glyphBounds(of text: String, font: NSFont) -> CGRect {
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+    return CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+}
+
+/// The font a match is drawn in: the auto-matched family when there is one, otherwise the
+/// system font in the chosen design and weight. One place, so fitting and drawing cannot
+/// disagree about which font they are talking about.
+func matchFont(size: CGFloat, weight: Font.Weight, design: Font.Design,
+               matchedFamily: String?, autoFont: Bool) -> NSFont {
+    if autoFont, let family = matchedFamily,
+       let f = NSFont(name: renderableFontName(family: family, bold: weight == .bold), size: size) {
+        return f
+    }
+    return nsFont(size: size, weight: weight, design: design)
+}
+
+/// Font size at which `text` fills `ink` — the box the original glyphs were measured to occupy in
+/// the image — matching its height, then shrunk if that would overshoot its width by more than
+/// widthTolerance.
+///
+/// This replaces fitting to Vision's bounding box. Vision's box is not the tight wrap around the
+/// glyphs it is often taken for: measured across IMG_0849 it runs 8-11% taller than the ink inside
+/// it, so solving a size from its height made every overlay that much too large — visibly so on
+/// short strings, which never trip the width limit that was accidentally correcting the long ones.
+func inkFittedFontSize(for text: String, weight: Font.Weight, design: Font.Design,
+                       matchedFamily: String?, autoFont: Bool, fitting ink: CGSize) -> CGFloat {
+    guard !text.isEmpty, ink.width > 1, ink.height > 1 else { return 4 }
+    let probe = matchFont(size: 100, weight: weight, design: design,
+                          matchedFamily: matchedFamily, autoFont: autoFont)
+    let b = glyphBounds(of: text, font: probe)
+    guard b.height > 1, b.width > 1 else { return 4 }
+    var size = 100 * ink.height / b.height
+    // A substitute family at the same ink height routinely needs a little more width for the same
+    // letters; only a genuine blowout past the tolerance is worth correcting for, and correcting
+    // it costs height, which is the dimension that was just measured exactly.
+    let allowed = ink.width * widthTolerance
+    let width = b.width * size / 100
+    if width > allowed, width > 0 { size *= allowed / width }
+    return max(size, 4)
+}
+
+/// Where to put the text's drawing origin — the point on the baseline that CTLineDraw takes — so
+/// its glyphs land exactly on `ink`, the box the original glyphs occupied. Left edge to left edge,
+/// bottom of the lowest ink to bottom of the lowest ink, which is why a string with descenders no
+/// longer sits low: the descender is part of what is being aligned rather than something the
+/// centring ignored.
+func inkDrawOrigin(for text: String, font: NSFont, ink: CGRect) -> CGPoint {
+    let b = glyphBounds(of: text, font: font)
+    return CGPoint(x: ink.minX - b.minX, y: ink.minY - b.minY)
+}

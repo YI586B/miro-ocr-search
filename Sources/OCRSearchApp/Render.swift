@@ -83,7 +83,9 @@ struct RenderPlan: Sendable {
     var pixelSize: CGSize
     var matches: [TextMatch]
     var bgColors: [Color?]
-    var textColors: [Color?]
+    /// The original glyphs measured off the image: colour, and the box they occupy. What the
+    /// overlay's size and position are derived from — see inkFittedFontSize.
+    var ink: [InkSample?]
     var matchedFonts: [String?]
     var fontSizes: [CGFloat]
 
@@ -98,12 +100,12 @@ struct RenderPlan: Sendable {
             ? ((try? findMatches(at: url, terms: terms)) ?? [])
             : []
         guard !matches.isEmpty, px.width > 0, px.height > 0 else {
-            return RenderPlan(pixelSize: px, matches: [], bgColors: [], textColors: [],
+            return RenderPlan(pixelSize: px, matches: [], bgColors: [], ink: [],
                               matchedFonts: [], fontSizes: [])
         }
         let rects = matches.map(\.rect)
         let bg = style.mode == "text" ? sampledBackgroundColors(at: path, rects: rects) : []
-        let ink = style.mode == "text" ? sampledTextColors(at: path, rects: rects) : []
+        let ink = style.mode == "text" ? sampledInk(at: path, rects: rects) : []
 
         var family: String? = style.manualFont.isEmpty ? nil : style.manualFont
         if style.autoFont, family == nil {
@@ -111,13 +113,22 @@ struct RenderPlan: Sendable {
             family = bestMatchingFont(forImage: all, pixelSize: px, from: candidateFontFamilies())
         }
         let families = Array(repeating: family, count: matches.count)
-        let sizes = matches.map { m -> CGFloat in
+        let sizes = matches.enumerated().map { i, m -> CGFloat in
+            let w = HL.fontWeight(style.weight), d = HL.fontDesign(style.design)
+            // Fit to the ink measured off the image when there is any. Vision's box is the
+            // fallback for a match whose glyphs could not be isolated — a blank box, or text on
+            // a busy background — where an approximate size beats none.
+            if let measured = ink[safe: i] ?? nil, measured.rect.height * px.height > 1 {
+                return inkFittedFontSize(for: m.text, weight: w, design: d,
+                                         matchedFamily: family, autoFont: style.autoFont,
+                                         fitting: CGSize(width: measured.rect.width * px.width,
+                                                         height: measured.rect.height * px.height))
+            }
             let box = CGSize(width: m.rect.width * px.width, height: m.rect.height * px.height)
-            return effectiveFontSize(for: m.text, weight: HL.fontWeight(style.weight),
-                                     design: HL.fontDesign(style.design),
+            return effectiveFontSize(for: m.text, weight: w, design: d,
                                      matchedFamily: family, autoFont: style.autoFont, fitting: box)
         }
-        return RenderPlan(pixelSize: px, matches: matches, bgColors: bg, textColors: ink,
+        return RenderPlan(pixelSize: px, matches: matches, bgColors: bg, ink: ink,
                           matchedFonts: families, fontSizes: sizes)
     }
 }
@@ -150,6 +161,29 @@ func renderExportPNG(path: String, query: String, searchMode: SearchMode,
     ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
     configureTextQuality(ctx)
 
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+    drawOverlay(in: ctx, canvas: CGSize(width: w, height: h), plan: plan, style: style)
+    drawWatermark(ctx: ctx, width: CGFloat(w), height: CGFloat(h))
+    NSGraphicsContext.restoreGraphicsState()
+    guard let out = ctx.makeImage() else { return nil }
+    return NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:])
+}
+
+/// Draws every match's overlay — box, or replacement text over a patch — onto `ctx`, whose canvas
+/// is `canvas` pixels for an image whose native size is `plan.pixelSize`.
+///
+/// Shared by the export and by the preview window, which shows the result of this as a single
+/// layer rather than assembling the overlay out of SwiftUI views. There used to be two
+/// implementations of this drawing, one per surface, and they could not both be aligned to the
+/// ink; now what is on screen is the same bitmap an export writes.
+func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: OverlayStyle) {
+    guard plan.pixelSize.width > 0, plan.pixelSize.height > 0 else { return }
+    configureTextQuality(ctx)
+    // Canvas pixels per native image pixel: 1 for an export, and also 1 for the preview, which
+    // draws this layer at native size and lets the view scale it down alongside the photo.
+    let k = canvas.width / plan.pixelSize.width
+
     // Native pixels per on-screen point. Fixed geometry the preview expresses in points (the
     // match box padding, the outline width, a manually typed font size) has to be scaled by this
     // to land the same way at full resolution — 2pt of outline on an image shown at 40% is 5
@@ -157,18 +191,16 @@ func renderExportPNG(path: String, query: String, searchMode: SearchMode,
     // has recorded one (no preview window has ever been opened) a mid-sized window's worth of
     // scale is assumed.
     let haveScale = style.manualSizeScale > 0
-    let scale: CGFloat = haveScale ? 1 / CGFloat(style.manualSizeScale) : max(1, CGFloat(w) / 900)
+    let scale: CGFloat = (haveScale ? 1 / CGFloat(style.manualSizeScale)
+                                    : max(1, plan.pixelSize.width / 900)) * k
     let pad = matchBoxPadding * scale
-
-    NSGraphicsContext.saveGraphicsState()
-    let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
-    NSGraphicsContext.current = nsCtx
+    let w = canvas.width, h = canvas.height
 
     for (i, m) in plan.matches.enumerated() {
         // Vision's rects are normalised with a bottom-left origin, which is also CGContext's —
         // no flip needed, unlike the samplers reading top-down bitmap rows.
-        let boxRect = CGRect(x: m.rect.minX * CGFloat(w), y: m.rect.minY * CGFloat(h),
-                             width: m.rect.width * CGFloat(w), height: m.rect.height * CGFloat(h))
+        let boxRect = CGRect(x: m.rect.minX * w, y: m.rect.minY * h,
+                             width: m.rect.width * w, height: m.rect.height * h)
         let padded = boxRect.insetBy(dx: -pad / 2, dy: -pad / 2)
 
         if style.mode == "text" {
@@ -180,8 +212,13 @@ func renderExportPNG(path: String, query: String, searchMode: SearchMode,
             ctx.setFillColor(fill)
             ctx.fill(padded.integral)
 
-            let ink = (style.autoTextColor ? plan.textColors[safe: i] ?? nil : nil)
+            let measured = plan.ink[safe: i] ?? nil
+            let inkColor = (style.autoTextColor ? measured?.color : nil)
                 .map(cgColor) ?? cgColor(hex: style.textHex, fallback: .black)
+            let inkRect = measured.map {
+                CGRect(x: $0.rect.minX * w, y: $0.rect.minY * h,
+                       width: $0.rect.width * w, height: $0.rect.height * h)
+            }
             // A manual size is only honoured when the scale it is relative to is actually
             // known. Guessing it is fine for a couple of pixels of padding, but a font size
             // guessed 30% wrong is text spilling out of its own background patch, so without a
@@ -189,8 +226,8 @@ func renderExportPNG(path: String, query: String, searchMode: SearchMode,
             // placeholder anyway until the user overrides it.
             let size = (style.manualSize > 0 && haveScale)
                 ? CGFloat(style.manualSize) * scale
-                : (plan.fontSizes[safe: i] ?? 12)
-            drawMatchText(m.text, in: boxRect, size: size, ink: ink,
+                : (plan.fontSizes[safe: i] ?? 12) * k
+            drawMatchText(m.text, ink: inkRect, box: boxRect, size: size, color: inkColor,
                           family: plan.matchedFonts[safe: i] ?? nil, style: style, ctx: ctx)
         } else {
             let box = cgColor(hex: style.boxHex, fallback: .systemYellow)
@@ -203,12 +240,22 @@ func renderExportPNG(path: String, query: String, searchMode: SearchMode,
             }
         }
     }
+}
 
-    drawWatermark(ctx: ctx, width: CGFloat(w), height: CGFloat(h))
-
+/// The overlay on its own, over transparency, at the image's native resolution — what the preview
+/// window lays over the photo. Same drawing as an export, so the two cannot drift apart.
+func overlayLayerImage(plan: RenderPlan, style: OverlayStyle) -> NSImage? {
+    let w = Int(plan.pixelSize.width), h = Int(plan.pixelSize.height)
+    guard w > 0, h > 0,
+          let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+    drawOverlay(in: ctx, canvas: CGSize(width: w, height: h), plan: plan, style: style)
     NSGraphicsContext.restoreGraphicsState()
-    guard let out = ctx.makeImage() else { return nil }
-    return NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:])
+    guard let img = ctx.makeImage() else { return nil }
+    return NSImage(cgImage: img, size: NSSize(width: w, height: h))
 }
 
 /// The settings that decide whether exported text reads as crisp or as subtly uneven — the
@@ -238,24 +285,24 @@ private func configureTextQuality(_ ctx: CGContext) {
     ctx.setAllowsFontSmoothing(false)
 }
 
-/// Draws one match's replacement text, left-aligned to the box's true left edge and with its cap
-/// height centred in the box.
+/// Draws one match's replacement text so its glyphs land on `ink` — the box the original glyphs
+/// were measured to occupy in the image (see sampledInk). Left edge to left edge, lowest ink to
+/// lowest ink.
 ///
-/// Both of those are measured against Vision's box rather than against the padded frame or the
-/// font's own line box, because Vision's box is the one thing here that came from the source
-/// image: it wraps the original glyphs tightly, so its left edge is where the original word
-/// started and its height is the original cap height. Centring the substitute font's *line* box
-/// instead would push the text off by however much built-in leading that particular family
-/// carries, which varies enormously between families (Noto Sans' line box is ~14% taller than the
-/// system font's at the same cap height).
-private func drawMatchText(_ text: String, in box: CGRect, size: CGFloat, ink: CGColor,
+/// Aligning ink to ink is the whole point. The previous version centred the font's cap height
+/// inside Vision's bounding box, which got two things wrong at once: Vision's box is taller than
+/// the ink it contains, so the text came out 7-11% too big, and centring a cap height ignores
+/// descenders, so anything with a 'y' or 'g' in it sat several pixels low. Both disappear when
+/// the target is the ink itself. `box` is only the fallback for a match whose glyphs could not be
+/// isolated from their background.
+///
+/// Drawn through CTLine rather than NSAttributedString.draw(at:), because draw(at:) positions the
+/// line box and the whole point here is to position the baseline.
+private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFloat, color: CGColor,
                            family: String?, style: OverlayStyle, ctx: CGContext) {
-    var font: NSFont
-    if style.autoFont, let family, let f = NSFont(name: renderableFontName(family: family, bold: style.weight == "bold"), size: size) {
-        font = f
-    } else {
-        font = nsFont(size: size, weight: HL.fontWeight(style.weight), design: HL.fontDesign(style.design))
-    }
+    var font = matchFont(size: size, weight: HL.fontWeight(style.weight),
+                         design: HL.fontDesign(style.design),
+                         matchedFamily: family, autoFont: style.autoFont)
     var shear: CGFloat = 0
     if style.italic {
         let real = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
@@ -267,21 +314,26 @@ private func drawMatchText(_ text: String, in box: CGRect, size: CGFloat, ink: C
 
     let attributed = NSAttributedString(string: text, attributes: [
         .font: font,
-        .foregroundColor: NSColor(cgColor: ink) ?? .black,
+        .foregroundColor: NSColor(cgColor: color) ?? .black,
         .ligature: 0,   // no automatic ligatures: they change a word's measured width after fitting
     ])
-    let baseline = box.minY + (box.height - font.capHeight) / 2
+    let line = CTLineCreateWithAttributedString(attributed)
+    let origin: CGPoint
+    if let ink, ink.height > 1 {
+        origin = inkDrawOrigin(for: text, font: font, ink: ink)
+    } else {
+        origin = CGPoint(x: box.minX, y: box.minY + (box.height - font.capHeight) / 2)
+    }
 
     ctx.saveGState()
     if shear != 0 {
-        ctx.translateBy(x: box.minX, y: baseline)
+        ctx.translateBy(x: origin.x, y: origin.y)
         ctx.concatenate(CGAffineTransform(a: 1, b: 0, c: shear, d: 1, tx: 0, ty: 0))
-        // draw(at:) positions the line box's bottom-left, so back off by the descender to put the
-        // baseline where it was computed.
-        attributed.draw(at: CGPoint(x: 0, y: font.descender))
+        ctx.textPosition = .zero
     } else {
-        attributed.draw(at: CGPoint(x: box.minX, y: baseline + font.descender))
+        ctx.textPosition = origin
     }
+    CTLineDraw(line, ctx)
     ctx.restoreGState()
 }
 

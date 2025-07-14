@@ -167,6 +167,14 @@ func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
     return rects.map(sample)
 }
 
+/// One match's original text as measured off the image: the colour of its glyphs, and the box
+/// those glyphs actually occupy (normalised, bottom-left origin, like Vision's rects). Both come
+/// out of the same single pixel scan, since finding the ink is most of the work either way.
+struct InkSample: Sendable {
+    var rect: CGRect
+    var color: Color
+}
+
 /// Approximate the color of the text itself within each match box, for text-overlay mode to draw
 /// the redrawn word in — rather than always using the manually picked Font color. Samples a grid
 /// of points inside the box, first finding the box's background reference the same way
@@ -175,7 +183,7 @@ func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
 /// likely to have landed on actual glyph ink rather than background showing through between or
 /// around the letters. Falls back to `nil` if the image can't be read as a bitmap, or nothing
 /// inside the box stands out from its background at all (e.g. blank space).
-func sampledTextColors(at path: String, rects: [CGRect]) -> [Color?] {
+func sampledInk(at path: String, rects: [CGRect]) -> [InkSample?] {
     guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
           let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return Array(repeating: nil, count: rects.count) }
     let rep = NSBitmapImageRep(cgImage: cg)
@@ -186,7 +194,7 @@ func sampledTextColors(at path: String, rects: [CGRect]) -> [Color?] {
         let py = min(max(Int(ny * CGFloat(h)), 0), h - 1)
         return rep.colorAt(x: px, y: py)
     }
-    func sample(_ rect: CGRect) -> Color? {
+    func sample(_ rect: CGRect) -> InkSample? {
         // Vision rects are normalised with origin bottom-left; bitmap pixel rows run top-down.
         let x0 = rect.minX, x1 = rect.maxX
         let yTop = 1 - rect.maxY, yBottom = 1 - rect.minY
@@ -199,26 +207,93 @@ func sampledTextColors(at path: String, rects: [CGRect]) -> [Color?] {
         let bgG = bg.map(\.greenComponent).reduce(0, +) / CGFloat(bg.count)
         let bgB = bg.map(\.blueComponent).reduce(0, +) / CGFloat(bg.count)
 
-        var candidates: [(color: NSColor, distance: CGFloat)] = []
-        let steps = 7
-        for iy in 1..<steps {
-            for ix in 1..<steps {
-                let nx = x0 + (x1 - x0) * CGFloat(ix) / CGFloat(steps)
-                let ny = yTop + (yBottom - yTop) * CGFloat(iy) / CGFloat(steps)
-                guard let c = colorAt(nx, ny) else { continue }
-                let d = (c.redComponent - bgR) * (c.redComponent - bgR)
-                    + (c.greenComponent - bgG) * (c.greenComponent - bgG)
-                    + (c.blueComponent - bgB) * (c.blueComponent - bgB)
-                candidates.append((c, d))
+        // Walk the box's pixels rather than a 6x6 grid of them. Most of any match box is
+        // background — text has gaps, and glyphs are thin — so a grid that coarse landed only a
+        // handful of points on ink at all, and those were as likely to be on an antialiased edge
+        // as on the solid middle of a stroke. Stepped only if the box is unusually large, since
+        // colorAt(x:y:) allocates an NSColor per call.
+        let pxX0 = max(Int(x0 * CGFloat(w)), 0), pxX1 = min(Int(x1 * CGFloat(w)), w - 1)
+        let pxY0 = max(Int(yTop * CGFloat(h)), 0), pxY1 = min(Int(yBottom * CGFloat(h)), h - 1)
+        guard pxX1 > pxX0, pxY1 > pxY0 else { return nil }
+        let area = (pxX1 - pxX0) * (pxY1 - pxY0)
+        let step = max(1, Int((Double(area) / 40_000).squareRoot().rounded(.up)))
+
+        var candidates: [(r: CGFloat, g: CGFloat, b: CGFloat, distance: CGFloat, x: Int, y: Int)] = []
+        candidates.reserveCapacity(area / (step * step) + 1)
+        for py in stride(from: pxY0, through: pxY1, by: step) {
+            for px in stride(from: pxX0, through: pxX1, by: step) {
+                guard let c = rep.colorAt(x: px, y: py) else { continue }
+                let dr = c.redComponent - bgR, dg = c.greenComponent - bgG, db = c.blueComponent - bgB
+                candidates.append((c.redComponent, c.greenComponent, c.blueComponent,
+                                   dr * dr + dg * dg + db * db, px, py))
             }
         }
+        guard !candidates.isEmpty else { return nil }
         candidates.sort { $0.distance > $1.distance }
-        let ink = candidates.prefix(max(1, candidates.count / 4))   // top quartile: likely glyph pixels
-        guard let top = ink.first, top.distance > 0.001 else { return nil }   // nothing stood out
-        let r = ink.map { $0.color.redComponent }.reduce(0, +) / CGFloat(ink.count)
-        let g = ink.map { $0.color.greenComponent }.reduce(0, +) / CGFloat(ink.count)
-        let b = ink.map { $0.color.blueComponent }.reduce(0, +) / CGFloat(ink.count)
-        return Color(.sRGB, red: r, green: g, blue: b, opacity: 1)
+
+        // The peak is taken a little way into the sorted run rather than as the single maximum,
+        // so one stray pixel — a compression artefact, part of an icon clipped into the box —
+        // cannot define the ink colour on its own.
+        let peak = candidates[min(candidates.count - 1, candidates.count / 50)].distance
+        guard peak > 0.001 else { return nil }   // nothing stood out from the background
+
+        // Average only the pixels at that peak: the solid interior of the strokes. Everything
+        // below it is the antialiased ramp from ink to background, which is by definition a
+        // blend of the two, so including it drags the answer towards the background — which is
+        // exactly what made white text come out as grey (measured: #EFEFEF instead of white),
+        // and what put a colour cast on it when the channels did not blend evenly. Distance is
+        // squared, so 0.9 here keeps only pixels about 95% of the way to full ink.
+        let core = candidates.prefix { $0.distance >= peak * 0.9 }
+
+        // Within that core, take the most common exact colour rather than the average of them.
+        // Flat UI text is a plateau of identical pixels with a thin shoulder of near-misses
+        // around it, and averaging still lets that shoulder pull the answer off: measured on a
+        // heading whose glyphs are 255 across 204 pixels, the mean came back 253. The mode lands
+        // on the plateau exactly. It is only trusted when the plateau is a real one — for text
+        // over a gradient, or photographic text, there is no single dominant value and the mean
+        // of the core is the better answer.
+        var tally: [Int: Int] = [:]
+        for c in core {
+            let key = (Int((c.r * 255).rounded()) << 16)
+                    | (Int((c.g * 255).rounded()) << 8)
+                    | Int((c.b * 255).rounded())
+            tally[key, default: 0] += 1
+        }
+        var color: Color
+        if let (key, count) = tally.max(by: { $0.value < $1.value }), count * 10 >= core.count {
+            color = Color(.sRGB, red: Double((key >> 16) & 255) / 255,
+                          green: Double((key >> 8) & 255) / 255,
+                          blue: Double(key & 255) / 255, opacity: 1)
+        } else {
+            let n = CGFloat(core.count)
+            color = Color(.sRGB, red: core.reduce(0) { $0 + $1.r } / n,
+                          green: core.reduce(0) { $0 + $1.g } / n,
+                          blue: core.reduce(0) { $0 + $1.b } / n, opacity: 1)
+        }
+
+        // The box those glyphs actually occupy. Taken at a quarter of the peak distance — about
+        // halfway up the antialiased ramp, which is where a glyph's edge visually is — rather
+        // than at the peak, since the extent has to include the softened outside of a stroke, not
+        // just its solid middle.
+        //
+        // This is the measurement the overlay is sized and placed against, and it is why:
+        // Vision's box is NOT a tight wrap around the glyphs, whatever its reputation. Measured
+        // on IMG_0849 it runs 8-11% taller than the ink inside it and starts several pixels to
+        // the left, so deriving a font size from the box's height came out that much too big and
+        // deriving a left edge from the box's edge started that much too early.
+        let edge = peak * 0.25
+        var minX = Int.max, maxX = Int.min, minY = Int.max, maxY = Int.min
+        for c in candidates where c.distance >= edge {
+            minX = min(minX, c.x); maxX = max(maxX, c.x)
+            minY = min(minY, c.y); maxY = max(maxY, c.y)
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        // Back to normalised, bottom-left origin, matching Vision's own rects.
+        let inkRect = CGRect(x: CGFloat(minX) / CGFloat(w),
+                             y: 1 - CGFloat(maxY + step) / CGFloat(h),
+                             width: CGFloat(maxX + step - minX) / CGFloat(w),
+                             height: CGFloat(maxY + step - minY) / CGFloat(h))
+        return InkSample(rect: inkRect, color: color)
     }
     return rects.map(sample)
 }
@@ -289,7 +364,14 @@ struct PreviewView: View {
     @State private var image: NSImage?
     @State private var matches: [TextMatch] = []
     @State private var bgColors: [Color?] = []
-    @State private var textColors: [Color?] = []
+    /// The original glyphs measured off the image, per match — colour and extent. See sampledInk.
+    @State private var inkSamples: [InkSample?] = []
+    /// The whole overlay, drawn once by the same code that draws an export (overlayLayerImage) and
+    /// laid over the photo, rather than assembled from a SwiftUI view per match. Two
+    /// implementations of the same drawing could not both be aligned to the ink, and keeping them
+    /// in step by hand is what produced the long run of alignment bugs; this way the preview shows
+    /// literally the bitmap that an export writes.
+    @State private var overlayLayer: NSImage?
     @State private var matchedFonts: [String?] = []
     /// The family bestMatchingFont(forImage:) actually detected, kept separately from
     /// matchedFonts (which holds the *effective* family, i.e. `manualFont` when it's set) purely
@@ -346,20 +428,19 @@ struct PreviewView: View {
                         // this is the cheap per-frame conversion to on-screen points.
                         let scale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1
                         ZStack(alignment: .topLeading) {
+                            if show, let overlayLayer {
+                                Image(nsImage: overlayLayer).resizable()
+                                    .frame(width: geo.size.width, height: geo.size.height)
+                                    .allowsHitTesting(false)
+                            }
+                            // Invisible, and only for hit testing: the overlay itself is one
+                            // image now, so each match still needs its own target for the hover
+                            // card to know which one the cursor is over.
                             ForEach(Array((show ? matches : []).enumerated()), id: \.offset) { i, m in
                                 let w = m.rect.width * geo.size.width + matchBoxPadding
                                 let h = m.rect.height * geo.size.height + matchBoxPadding
-                                MatchView(text: m.text, size: CGSize(width: w, height: h), mode: mode,
-                                          box: box, textColor: txt, opacity: opacity, outline: outline,
-                                          design: design, weight: weight,
-                                          sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: bg,
-                                          autoBackground: autoBg,
-                                          matchedFont: matchedFonts.indices.contains(i) ? matchedFonts[i] : nil,
-                                          autoFont: autoFont,
-                                          fontSize: displayFontSize(i, scale: scale),
-                                          renderedFontName: renderedFontNames.indices.contains(i) ? renderedFontNames[i] : nil,
-                                          sampledTextColor: textColors.indices.contains(i) ? textColors[i] : nil,
-                                          autoTextColor: autoTextColor, italic: italic)
+                                Color.clear.contentShape(Rectangle())
+                                    .frame(width: w, height: h)
                                     .position(x: m.rect.midX * geo.size.width,
                                               y: (1 - m.rect.midY) * geo.size.height)
                                     .onContinuousHover(coordinateSpace: .named("preview")) { phase in
@@ -380,7 +461,7 @@ struct PreviewView: View {
                                                fontSize: displayFontSize(i, scale: scale),
                                                design: design, weight: weight,
                                                boxColor: box,
-                                               textColor: (autoTextColor ? (textColors.indices.contains(i) ? textColors[i] : nil) : nil) ?? txt,
+                                               textColor: (autoTextColor ? inkSamples[safe: i] ?? nil : nil)?.color ?? txt,
                                                bgColor: (autoBg ? (bgColors.indices.contains(i) ? bgColors[i] : nil) : nil) ?? bg,
                                                opacity: opacity, matchedFont: mf, autoFont: autoFont,
                                                fontIsManual: !manualFont.isEmpty)
@@ -569,7 +650,7 @@ struct PreviewView: View {
         .task(id: path) {
             image = NSImage(contentsOfFile: path)
             failed = image == nil
-            bgColors = []; textColors = []; matchedFonts = []; fontSizes = []; renderedFontNames = []; pixelSize = .zero
+            bgColors = []; inkSamples = []; matchedFonts = []; fontSizes = []; renderedFontNames = []; pixelSize = .zero
             let terms = searchTerms(query, mode: searchMode)
             guard image != nil, !terms.isEmpty else { return }
             scanning = true
@@ -581,15 +662,19 @@ struct PreviewView: View {
             bgColors = await Task.detached(priority: .userInitiated) {
                 sampledBackgroundColors(at: p, rects: rects)
             }.value
-            textColors = await Task.detached(priority: .userInitiated) {
-                sampledTextColors(at: p, rects: rects)
+            inkSamples = await Task.detached(priority: .userInitiated) {
+                sampledInk(at: p, rects: rects)
             }.value
             pixelSize = await Task.detached(priority: .userInitiated) { imagePixelSize(at: p) ?? .zero }.value
             if autoFont { await detectFonts() }
             await recomputeFontSizes()
             recomputeRenderedFontNames()
+            rebuildOverlay()
             scanning = false
         }
+        .onChange(of: [mode, boxHex, textHex, bgHex, design, weight, manualFont,
+                       "\(show)", "\(opacity)", "\(outline)", "\(autoTextColor)",
+                       "\(autoBg)", "\(manualSize)", "\(italic)"]) { _ in rebuildOverlay() }
         .onChange(of: autoFont) { on in
             // Always redetect on turning on, rather than only when matchedFonts is still empty:
             // a prior attempt that legitimately found no match leaves it as a *non-empty* array
@@ -599,14 +684,31 @@ struct PreviewView: View {
                 if on { await detectFonts() }
                 await recomputeFontSizes()
                 recomputeRenderedFontNames()
+                rebuildOverlay()
             }
         }
-        .onChange(of: design) { _ in Task { await recomputeFontSizes() } }
-        .onChange(of: weight) { _ in Task { await recomputeFontSizes(); recomputeRenderedFontNames() } }
+        .onChange(of: design) { _ in Task { await recomputeFontSizes(); rebuildOverlay() } }
+        .onChange(of: weight) { _ in Task { await recomputeFontSizes(); recomputeRenderedFontNames(); rebuildOverlay() } }
         .onChange(of: manualFont) { _ in
             applyFontOverride()
-            Task { await recomputeFontSizes(); recomputeRenderedFontNames() }
+            Task { await recomputeFontSizes(); recomputeRenderedFontNames(); rebuildOverlay() }
         }
+    }
+
+    /// Everything the shared overlay drawing needs, from what this window has already computed —
+    /// no second OCR pass, and guaranteed to be the same inputs the on-screen layer was built
+    /// from, so a Save writes exactly what is being looked at.
+    private func currentPlan() -> RenderPlan {
+        RenderPlan(pixelSize: pixelSize, matches: show ? matches : [], bgColors: bgColors,
+                   ink: inkSamples, matchedFonts: matchedFonts, fontSizes: fontSizes)
+    }
+
+    /// Redraws the overlay layer. Cheap relative to the scan that produced its inputs (no OCR, no
+    /// pixel sampling), and it does not depend on the window's size — the layer is drawn at the
+    /// image's native resolution and scaled down with the photo — so resizing never triggers it.
+    private func rebuildOverlay() {
+        guard pixelSize.width > 0 else { overlayLayer = nil; return }
+        overlayLayer = overlayLayerImage(plan: currentPlan(), style: OverlayStyle.current())
     }
 
     /// Tracks how big the image is being drawn, and persists it (HL.manualSizeScale) so the
@@ -633,9 +735,7 @@ struct PreviewView: View {
         panel.allowedContentTypes = [.png]
         panel.message = "Saved with the overlays and watermark as shown, at the image's full resolution."
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let plan = RenderPlan(pixelSize: pixelSize, matches: show ? matches : [],
-                              bgColors: bgColors, textColors: textColors,
-                              matchedFonts: matchedFonts, fontSizes: fontSizes)
+        let plan = currentPlan()
         guard let data = renderExportPNG(path: path, query: query, searchMode: searchMode,
                                          style: OverlayStyle.current(), plan: plan) else { return }
         try? data.write(to: url)
@@ -669,7 +769,7 @@ struct PreviewView: View {
                       autoFont: autoFont,
                       fontSize: min(displayFontSize(i, scale: displayScale), size.height),
                       renderedFontName: renderedFontNames.indices.contains(i) ? renderedFontNames[i] : nil,
-                      sampledTextColor: textColors.indices.contains(i) ? textColors[i] : nil,
+                      sampledTextColor: inkSamples.indices.contains(i) ? inkSamples[i]?.color : nil,
                       autoTextColor: autoTextColor, italic: italic)
         }
         .frame(maxWidth: .infinity).frame(height: 44)
@@ -729,14 +829,23 @@ struct PreviewView: View {
     private func recomputeFontSizes() async {
         guard !matches.isEmpty, pixelSize.width > 0, pixelSize.height > 0 else { fontSizes = []; return }
         let items = matches.map { (text: $0.text, rect: $0.rect) }
-        let mf = matchedFonts
+        let mf = matchedFonts, ink = inkSamples
         let af = autoFont, w = weight, d = design, px = pixelSize
         fontSizes = await Task.detached(priority: .userInitiated) {
             items.enumerated().map { i, it in
-                let box = CGSize(width: it.rect.width * px.width, height: it.rect.height * px.height)
                 let family = i < mf.count ? mf[i] : nil
+                // Fit to the glyphs measured off the image, falling back to Vision's box only
+                // when they could not be isolated — see inkFittedFontSize for why the box makes
+                // a poor ruler.
+                if let measured = ink[safe: i] ?? nil, measured.rect.height * px.height > 1 {
+                    return inkFittedFontSize(for: it.text, weight: HL.fontWeight(w), design: HL.fontDesign(d),
+                                             matchedFamily: family, autoFont: af,
+                                             fitting: CGSize(width: measured.rect.width * px.width,
+                                                             height: measured.rect.height * px.height))
+                }
+                let box = CGSize(width: it.rect.width * px.width, height: it.rect.height * px.height)
                 return effectiveFontSize(for: it.text, weight: HL.fontWeight(w), design: HL.fontDesign(d),
-                                          matchedFamily: family, autoFont: af, fitting: box)
+                                         matchedFamily: family, autoFont: af, fitting: box)
             }
         }.value
     }

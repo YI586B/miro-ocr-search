@@ -19,7 +19,8 @@ macOS Swift package: OCR images with Apple Vision, search them with SQLite FTS5,
 
 ## State
 - Verified on the Mac: CLI index + search work on miro-files (16/16 indexed).
-- Image export verified by rendering miro-files/IMG_0915.PNG and inspecting the output: text mode, box mode, bold/italic, manual size.
+- Overlay is sized and placed against the glyphs measured off the image (sampledInk -> inkFittedFontSize/inkDrawOrigin), NOT Vision's box, which runs 8-11% taller than the ink inside it. Measured on IMG_0849: placement within 1px, height within 5%, colour exact.
+- The preview window and the export draw the same bitmap (drawOverlay / overlayLayerImage); MatchView now only backs the Settings/popover sample swatch.
 - Watermark verified across all 17 miro-files: badge exactly 63x34 at 20px right/bottom margins, wordmark centred.
 - Sources/assets/logo.png and watermark.jpeg are unused: logo.png is fully opaque (its "transparency" is a painted checkerboard), so the icon and the in-app badge come from watermark.svg instead.
 - Written but NOT yet compiled/tested: Miro export (untested against real API; needs a Miro token).
