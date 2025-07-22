@@ -876,25 +876,49 @@ struct ContentView: View {
                 .pickerStyle(.segmented).frame(width: 150)
                 .help("Phrase: match the whole search text together, in order. Any word: match each word separately, anywhere.")
                 .onChange(of: m.searchMode) { _ in m.search() }
-                Button("Index folder…") { pick(dir: true) { m.index(folder: $0[0]) } }
-                Button("Add files…") { pick(dir: false) { m.add(files: $0) } }
+                // The folder being searched, and the only thing being searched: there is no index
+                // behind this, so what is listed always comes from the folder shown here.
+                Menu {
+                    Button("Open folder…") { pick(dir: true) { m.open(folder: $0[0]) } }
+                    if m.folder != nil {
+                        Button("Reload", action: m.reload)
+                            .help("Re-read the folder, picking up anything added or changed")
+                        Divider()
+                        Button("Reveal in Finder") {
+                            if let f = m.folder { NSWorkspace.shared.activateFileViewerSelecting([f]) }
+                        }
+                    }
+                    Divider()
+                    Button("Add files…") { pick(dir: false) { m.add(files: $0) } }
+                } label: {
+                    Label(m.folder?.lastPathComponent ?? "Choose folder…", systemImage: "folder")
+                }
+                .menuStyle(.borderlessButton).fixedSize()
+                .help(m.folder?.path ?? "Pick the folder of images to search")
+
                 Button { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) } label: {
                     Image(systemName: "gearshape")
                 }.help("Settings (highlight color)").accessibilityLabel("Settings")
             }.padding(10)
+            .onAppear { m.restoreFolder() }
             Divider()
             if m.results.isEmpty {
                 VStack(spacing: 12) {
                     Spacer()
                     Image(systemName: "doc.text.magnifyingglass")
                         .font(.system(size: 44)).foregroundStyle(.tertiary)
-                    Text(m.query.isEmpty ? "No images indexed yet" : "No matches for “\(m.query)”")
+                    Text(m.folder == nil ? "No folder open"
+                         : m.query.isEmpty ? "Ready to search \(m.folder!.lastPathComponent)"
+                         : "No matches for “\(m.query)” in \(m.folder!.lastPathComponent)")
                         .font(.title3).foregroundStyle(.secondary)
-                    if m.query.isEmpty {
-                        Text("Index a folder of screenshots to start searching their text.")
+                    if m.folder == nil {
+                        Text("Choose a folder of screenshots to search the text inside them.")
                             .font(.callout).foregroundStyle(.tertiary)
-                        Button("Index folder…") { pick(dir: true) { m.index(folder: $0[0]) } }
+                        Button("Open folder…") { pick(dir: true) { m.open(folder: $0[0]) } }
                             .buttonStyle(.borderedProminent).padding(.top, 4)
+                    } else if m.query.isEmpty {
+                        Text("Type any text and press Return.")
+                            .font(.callout).foregroundStyle(.tertiary)
                     }
                     Spacer()
                 }
@@ -922,7 +946,13 @@ struct ContentView: View {
             Divider()
             HStack {
                 Text(m.status).font(.callout).foregroundStyle(.secondary).lineLimit(1)
-                if m.busy { ProgressView().controlSize(.small) }
+                if let r = m.reading {
+                    ProgressView(value: Double(r.done), total: Double(max(r.total, 1)))
+                        .frame(width: 90).controlSize(.small)
+                    Text("\(r.done)/\(r.total)").font(.caption).foregroundStyle(.tertiary).monospacedDigit()
+                } else if m.busy {
+                    ProgressView().controlSize(.small)
+                }
                 if let l = m.link {
                     Button { NSWorkspace.shared.open(l) } label: { MiroBadge(size: 14); Text("Open board") }
                 }

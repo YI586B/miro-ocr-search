@@ -13,8 +13,25 @@ struct Hit: Identifiable, Hashable {
     var id: String { path }
 }
 
+/// One image in the open folder, with the text read off it. Held in memory for as long as the
+/// folder is open and no longer than that.
+struct Doc: Sendable {
+    let path: String
+    let text: String
+}
+
 @MainActor
 final class Model: ObservableObject {
+    /// The folder being searched. Everything comes from here: there is no index and no database,
+    /// so what you search is exactly what is in the folder you picked, as it is right now.
+    @Published var folder: URL? {
+        didSet { UserDefaults.standard.set(folder?.path, forKey: "folder") }
+    }
+    /// Every image in that folder, with its text. Rebuilt when the folder is opened or reloaded.
+    private var docs: [Doc] = []
+    /// Progress while reading a folder — (done, total) — for the status line.
+    @Published var reading: (done: Int, total: Int)?
+    private var readTask: Task<Void, Never>?
     @Published var query = ""
     @Published var searchMode: SearchMode = SearchMode(rawValue: UserDefaults.standard.string(forKey: "searchMode") ?? "") ?? .phrase {
         didSet { UserDefaults.standard.set(searchMode.rawValue, forKey: "searchMode") }
@@ -33,27 +50,106 @@ final class Model: ObservableObject {
         didSet { Keychain.set("miro-token", token) }
     }
 
+    /// Matches the query against the text already read from the folder — a substring scan over a
+    /// few dozen strings, so it runs on every keystroke without a second thought.
     func search() {
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { results = []; return }
-        do {
-            let db = try Database(path: dbPath)
-            let manual = results.filter { $0.snippet.isEmpty && selection.contains($0.path) }  // keep added files
-            results = try db.search(ftsQuery(query, mode: searchMode), limit: 100).map { Hit(path: $0.path, snippet: $0.snippet) } + manual
-            status = plural(results.count, "result")
-        } catch { status = "Search error: \(error.localizedDescription)" }
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let manual = results.filter { $0.snippet.isEmpty && selection.contains($0.path) }  // keep added files
+        guard !q.isEmpty else { results = manual; return }
+        let terms = searchTerms(q, mode: searchMode)
+        guard !terms.isEmpty else { results = manual; return }
+
+        let hits = docs.compactMap { doc -> Hit? in
+            // .phrase gives one term (the whole query, matched contiguously); .words gives one
+            // term per word, all of which have to appear somewhere. Same rule the preview window
+            // highlights by, so what is listed and what is boxed on the image agree.
+            let found = terms.compactMap { doc.text.range(of: $0, options: .caseInsensitive) }
+            guard found.count == terms.count, let first = found.min(by: { $0.lowerBound < $1.lowerBound })
+            else { return nil }
+            return Hit(path: doc.path, snippet: snippet(doc.text, around: first))
+        }
+        results = hits + manual
+        status = folder == nil ? plural(results.count, "result")
+            : "\(plural(results.count, "result")) in \(folder!.lastPathComponent)"
     }
 
-    func index(folder: URL) {
-        busy = true; status = "Indexing \(folder.lastPathComponent)…"
-        Task.detached {
-            let r: (Int, Int, Int)
-            do { r = indexFolder(folder, db: try Database(path: dbPath), log: { _ in }) }
-            catch { await MainActor.run { self.status = "Index error: \(error.localizedDescription)"; self.busy = false }; return }
+    /// A line of context around the match, with the match itself bracketed — the same shape the
+    /// result rows showed when this came out of the database.
+    private func snippet(_ text: String, around match: Range<String.Index>) -> String {
+        let flat = text.replacingOccurrences(of: "\n", with: " ")
+        guard let m = flat.range(of: String(text[match]), options: .caseInsensitive) else { return flat }
+        let pad = 60
+        let lo = flat.index(m.lowerBound, offsetBy: -pad, limitedBy: flat.startIndex) ?? flat.startIndex
+        let hi = flat.index(m.upperBound, offsetBy: pad, limitedBy: flat.endIndex) ?? flat.endIndex
+        return (lo == flat.startIndex ? "" : "…") + flat[lo..<m.lowerBound]
+            + "[" + flat[m] + "]" + flat[m.upperBound..<hi] + (hi == flat.endIndex ? "" : "…")
+    }
+
+    /// Reads every image in `url` and keeps the text in memory for as long as it stays open.
+    ///
+    /// The whole folder is read up front rather than on demand because the alternative is running
+    /// OCR inside the search, which would make every keystroke cost seconds. Reading is the slow
+    /// part and it happens once, visibly, with a count; searching afterwards is instant.
+    func open(folder url: URL) {
+        readTask?.cancel()
+        folder = url
+        docs = []; results = []; selection = []
+        let images = (FileManager.default.enumerator(
+            at: url, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])?
+            .compactMap { $0 as? URL }
+            .filter { imageExts.contains($0.pathExtension.lowercased()) } ?? []).sorted { $0.path < $1.path }
+
+        guard !images.isEmpty else {
+            status = "No images in \(url.lastPathComponent)"; reading = nil; return
+        }
+        busy = true; reading = (0, images.count)
+        status = "Reading \(plural(images.count, "image")) in \(url.lastPathComponent)…"
+
+        readTask = Task { [weak self] in
+            var out: [Doc] = []
+            // Bounded concurrency: Vision is happy to use every core, but spawning one task per
+            // file on a large folder just thrashes.
+            let lanes = max(2, min(ProcessInfo.processInfo.activeProcessorCount, 8))
+            var next = 0
+            await withTaskGroup(of: Doc?.self) { group in
+                func submit() {
+                    guard next < images.count else { return }
+                    let u = images[next]; next += 1
+                    group.addTask(priority: .userInitiated) {
+                        guard let text = try? recognizeText(at: u) else { return nil }
+                        return Doc(path: u.path, text: text)
+                    }
+                }
+                for _ in 0..<lanes { submit() }
+                while let doc = await group.next() {
+                    if Task.isCancelled { group.cancelAll(); return }
+                    if let doc { out.append(doc) }
+                    await MainActor.run { self?.reading = (out.count, images.count) }
+                    submit()
+                }
+            }
+            guard !Task.isCancelled else { return }
             await MainActor.run {
-                self.status = "Indexed \(r.0) new, \(r.1) unchanged, \(r.2) failed"
-                self.busy = false; self.search()
+                guard let self else { return }
+                self.docs = out.sorted { $0.path < $1.path }
+                self.reading = nil; self.busy = false
+                let failed = images.count - out.count
+                self.status = failed == 0
+                    ? "Read \(plural(out.count, "image")) in \(url.lastPathComponent)"
+                    : "Read \(plural(out.count, "image")) in \(url.lastPathComponent), \(failed) unreadable"
+                self.search()
             }
         }
+    }
+
+    /// Re-reads the open folder, picking up anything added or changed since.
+    func reload() { if let folder { open(folder: folder) } }
+
+    /// Reopens whatever folder was last used, on launch.
+    func restoreFolder() {
+        guard folder == nil, let p = UserDefaults.standard.string(forKey: "folder"),
+              FileManager.default.fileExists(atPath: p) else { return }
+        open(folder: URL(fileURLWithPath: p))
     }
 
     func add(files: [URL]) {
@@ -97,8 +193,9 @@ final class Model: ObservableObject {
     enum FileFormat { case csv, markdown, images }
 
     private func fullText(_ hit: Hit) -> String {
-        (try? Database(path: dbPath).text(of: hit.path))
-            ?? (try? recognizeText(at: URL(fileURLWithPath: hit.path))) ?? hit.snippet
+        docs.first { $0.path == hit.path }?.text
+            ?? (try? recognizeText(at: URL(fileURLWithPath: hit.path)))   // a file added by hand
+            ?? hit.snippet
     }
 
     func exportToFile(_ format: FileFormat) {
