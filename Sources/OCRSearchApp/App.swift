@@ -551,13 +551,18 @@ struct PreviewView: View {
                             // found (and turns auto-match on, if it was off, so the change takes
                             // visible effect immediately); "Auto" in the font menu, or the Reset
                             // button once anything is overridden, goes back to automatic.
-                            let hoveredOrFirstSize: Double = {
-                                let idx = hoverIndex ?? 0
-                                let native = fontSizes.indices.contains(idx) ? fontSizes[idx] : 17
-                                return Double((native * displayScale).rounded())
-                            }()
+                            // The auto-fitted size this field shows while nothing is overriding
+                            // it. Deliberately the *first* match's size and not the hovered one:
+                            // the guard below decides whether a commit is a real edit by comparing
+                            // it against what the field was showing, and a value that moves with
+                            // the cursor defeats that. Hovering a smaller match redrew the field,
+                            // and the next commit then looked like the user had asked for the
+                            // previous, larger number — which is how a 15pt override got stored
+                            // and made every match on the page 15pt, several too large for the
+                            // smaller ones. Per-match sizes are still on the hover card.
+                            let autoSizeShown = Double(((fontSizes.first ?? 17) * displayScale).rounded())
                             let sizeBinding = Binding<Double>(
-                                get: { manualSize > 0 ? manualSize : hoveredOrFirstSize },
+                                get: { manualSize > 0 ? manualSize : autoSizeShown },
                                 // A TextField(value:) commits whatever it is currently showing
                                 // every time it loses focus, whether or not the user typed
                                 // anything -- and while the size is automatic, what it shows is
@@ -571,7 +576,7 @@ struct PreviewView: View {
                                 // falls back to before anything has been fitted.)
                                 set: { typed in
                                     let v = max(typed, 1)
-                                    guard manualSize > 0 || abs(v - hoveredOrFirstSize) >= 0.5 else { return }
+                                    guard manualSize > 0 || abs(v - autoSizeShown) >= 0.5 else { return }
                                     manualSize = v
                                 }
                             )
