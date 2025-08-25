@@ -8,7 +8,7 @@ import OCRSearchCore
 /// run off the main actor without reading @AppStorage — which is a SwiftUI view-side wrapper and
 /// isn't available to the export path, whether that runs from the preview window's Save command
 /// or from a batch export with no preview window open at all.
-struct OverlayStyle: Sendable {
+struct OverlayStyle: Sendable, Codable, Equatable {
     var show = true
     var mode = "box"
     var boxHex = HL.defaultBox
@@ -25,6 +25,56 @@ struct OverlayStyle: Sendable {
     var manualSize: Double = 0
     var manualSizeScale: Double = 0
     var italic = false
+
+    // MARK: per image
+    //
+    // The look is stored per image, not once for the app. Every image is a different screenshot
+    // with its own type sizes and colours, so a font or size that is right for one is usually
+    // wrong for the next; sharing one set of values meant tuning an image silently restyled every
+    // other one, and there was no way to go back to what a given image looked like. The Settings
+    // window still sets the defaults an image starts from.
+
+    private static let store = "imageStyles"
+    /// Enough that returning to an image from a session's work still finds its settings, bounded
+    /// so the defaults file cannot grow without limit.
+    private static let keep = 300
+
+    /// The look for `path`: what was last set for that image, or the defaults if it has none.
+    static func forImage(_ path: String, _ d: UserDefaults = .standard) -> OverlayStyle {
+        guard let raw = d.dictionary(forKey: store)?[path] as? Data,
+              let s = try? JSONDecoder().decode(OverlayStyle.self, from: raw) else { return current(d) }
+        return s
+    }
+
+    func save(for path: String, _ d: UserDefaults = .standard) {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        var all = d.dictionary(forKey: Self.store) ?? [:]
+        all[path] = data
+        // Oldest-first eviction is not worth a timestamp per entry; dropping arbitrary extras once
+        // over the cap only costs those images their overrides, and they fall back to the defaults.
+        if all.count > Self.keep {
+            all = all.prefix(Self.keep).reduce(into: [String: Any]()) { $0[$1.key] = $1.value }
+        }
+        d.set(all, forKey: Self.store)
+    }
+
+    static func clear(_ path: String, _ d: UserDefaults = .standard) {
+        guard var all = d.dictionary(forKey: store) else { return }
+        all[path] = nil
+        d.set(all, forKey: store)
+    }
+
+    /// Writes this look back as the defaults every image starts from.
+    func saveAsDefaults(_ d: UserDefaults = .standard) {
+        d.set(show, forKey: HL.show); d.set(mode, forKey: HL.mode)
+        d.set(boxHex, forKey: HL.boxHex); d.set(opacity, forKey: HL.opacity)
+        d.set(outline, forKey: HL.outline); d.set(textHex, forKey: HL.textHex)
+        d.set(autoTextColor, forKey: HL.autoTextColor); d.set(bgHex, forKey: HL.bgHex)
+        d.set(autoBg, forKey: HL.autoBg); d.set(design, forKey: HL.design)
+        d.set(weight, forKey: HL.weight); d.set(autoFont, forKey: HL.autoFont)
+        d.set(manualFont, forKey: HL.manualFont); d.set(manualSize, forKey: HL.manualSize)
+        d.set(italic, forKey: HL.italic)
+    }
 
     /// Reads whatever the Settings window and the preview toolbar have persisted. Every lookup
     /// goes through an explicit "is it set at all?" check rather than UserDefaults' zero/false
@@ -164,7 +214,9 @@ func renderExportPNG(path: String, query: String, searchMode: SearchMode,
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
     drawOverlay(in: ctx, canvas: CGSize(width: w, height: h), plan: plan, style: style)
-    drawWatermark(ctx: ctx, width: CGFloat(w), height: CGFloat(h))
+    // Only when the overlay is on: with it off the export is the image as it is, and a watermark
+    // would be the one thing contradicting that.
+    if style.show { drawWatermark(ctx: ctx, width: CGFloat(w), height: CGFloat(h)) }
     NSGraphicsContext.restoreGraphicsState()
     guard let out = ctx.makeImage() else { return nil }
     return NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:])
