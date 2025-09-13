@@ -198,39 +198,61 @@ final class Model: ObservableObject {
             ?? hit.snippet
     }
 
+    /// Shows a panel without starting a nested modal run loop, and not until the next turn of the
+    /// run loop either.
+    ///
+    /// Every one of these is invoked from a Menu item. runModal() spins its own modal loop, and
+    /// starting one while AppKit is still unwinding the menu's tracking loop wedges the app — the
+    /// window stops responding and there is no crash report, because nothing crashed. begin()
+    /// presents the same panel modelessly and calls back instead. (NSOpenPanel is an NSSavePanel,
+    /// so this covers both.)
+    private func present(_ panel: NSSavePanel, _ done: @escaping () -> Void) {
+        DispatchQueue.main.async {
+            panel.begin { if $0 == .OK { done() } }
+        }
+    }
+
     func exportToFile(_ format: FileFormat) {
         let hits = results.filter { selection.contains($0.path) }
         guard !hits.isEmpty else { return }
-        do {
-            switch format {
-            case .csv, .markdown:
-                let panel = NSSavePanel()
-                let isCSV = format == .csv
-                panel.nameFieldStringValue = isCSV ? "ocr-results.csv" : "ocr-results.md"
-                panel.allowedContentTypes = [isCSV ? .commaSeparatedText : UTType(filenameExtension: "md") ?? .plainText]
-                guard panel.runModal() == .OK, let url = panel.url else { return }
-                var out = ""
-                if isCSV {
-                    func q(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
-                    out = "path,filename,text\n" + hits.map {
-                        [q($0.path), q(($0.path as NSString).lastPathComponent), q(fullText($0))].joined(separator: ",")
-                    }.joined(separator: "\n") + "\n"
-                } else {
-                    out = "# OCR search results\n\n" + hits.map {
-                        let t = fullText($0).split(separator: "\n").map { "> \($0)" }.joined(separator: "\n")
-                        return "## \(($0.path as NSString).lastPathComponent)\n\n`\($0.path)`\n\n\(t)\n"
-                    }.joined(separator: "\n")
-                }
-                try out.write(to: url, atomically: true, encoding: .utf8)
-                status = "Saved \(hits.count) item(s) to \(url.lastPathComponent)"
-            case .images:
-                let panel = NSOpenPanel()
-                panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
-                panel.prompt = "Export here"
-                panel.message = "Choose where to write the images, with their overlays and watermark."
-                guard panel.runModal() == .OK, let dir = panel.url else { return }
-                renderImages(hits, into: dir)
+        switch format {
+        case .csv, .markdown:
+            let isCSV = format == .csv
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = isCSV ? "ocr-results.csv" : "ocr-results.md"
+            panel.allowedContentTypes = [isCSV ? .commaSeparatedText : UTType(filenameExtension: "md") ?? .plainText]
+            present(panel) { [weak self] in
+                guard let self, let url = panel.url else { return }
+                self.writeText(hits, isCSV: isCSV, to: url)
             }
+        case .images:
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
+            panel.prompt = "Export here"
+            panel.message = "Choose where to write the images, with their overlays and watermark."
+            present(panel) { [weak self] in
+                guard let self, let dir = panel.url else { return }
+                self.renderImages(hits, into: dir)
+            }
+        }
+    }
+
+    private func writeText(_ hits: [Hit], isCSV: Bool, to url: URL) {
+        var out = ""
+        if isCSV {
+            func q(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+            out = "path,filename,text\n" + hits.map {
+                [q($0.path), q(($0.path as NSString).lastPathComponent), q(fullText($0))].joined(separator: ",")
+            }.joined(separator: "\n") + "\n"
+        } else {
+            out = "# OCR search results\n\n" + hits.map {
+                let t = fullText($0).split(separator: "\n").map { "> \($0)" }.joined(separator: "\n")
+                return "## \(($0.path as NSString).lastPathComponent)\n\n`\($0.path)`\n\n\(t)\n"
+            }.joined(separator: "\n")
+        }
+        do {
+            try out.write(to: url, atomically: true, encoding: .utf8)
+            status = "Saved \(plural(hits.count, "item")) to \(url.lastPathComponent)"
         } catch { status = "Export failed: \(error.localizedDescription)" }
     }
 

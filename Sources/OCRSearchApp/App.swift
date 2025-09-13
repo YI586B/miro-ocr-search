@@ -823,15 +823,23 @@ struct PreviewView: View {
     /// than a fresh pass that could resolve a detail differently.
     private func saveImage() {
         let name = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        // Captured before the panel opens, so what gets written is what was on screen when Save
+        // was chosen rather than whatever the window has moved on to.
+        let plan = currentPlan(), st = drawingStyle
+        let (p, q, sm) = (path, query, searchMode)
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "\(name)-overlay.png"
         panel.allowedContentTypes = [.png]
         panel.message = "Saved with the overlays and watermark as shown, at the image's full resolution."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        let plan = currentPlan()
-        guard let data = renderExportPNG(path: path, query: query, searchMode: searchMode,
-                                         style: drawingStyle, plan: plan) else { return }
-        try? data.write(to: url)
+        // begin(), not runModal() -- see pick(dir:_:).
+        DispatchQueue.main.async {
+            panel.begin { response in
+                guard response == .OK, let url = panel.url,
+                      let data = renderExportPNG(path: p, query: q, searchMode: sm, style: st, plan: plan)
+                else { return }
+                try? data.write(to: url)
+            }
+        }
     }
 
     /// Small all-caps caption used to head each group of controls in the style popover — the
@@ -1073,10 +1081,21 @@ struct ContentView: View {
                                                         startIndex: paths.firstIndex(of: hit.path) ?? 0))
     }
 
+    /// Shows an open panel modelessly, on the next turn of the run loop.
+    ///
+    /// Not runModal(): these are invoked from a Menu item, and starting a nested modal run loop
+    /// while AppKit is still unwinding the menu's own tracking loop hangs the app — no crash
+    /// report, because nothing crashes; the window simply stops responding. It only started
+    /// happening when these moved from plain toolbar buttons into the folder menu.
     private func pick(dir: Bool, _ done: @escaping ([URL]) -> Void) {
-        let p = NSOpenPanel()
-        p.canChooseDirectories = dir; p.canChooseFiles = !dir; p.allowsMultipleSelection = !dir
-        if p.runModal() == .OK, !p.urls.isEmpty { done(p.urls) }
+        DispatchQueue.main.async {
+            let p = NSOpenPanel()
+            p.canChooseDirectories = dir; p.canChooseFiles = !dir; p.allowsMultipleSelection = !dir
+            p.begin { response in
+                guard response == .OK, !p.urls.isEmpty else { return }
+                done(p.urls)
+            }
+        }
     }
 }
 
