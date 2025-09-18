@@ -17,4 +17,13 @@ cp Info.plist "$APP/Contents/Info.plist"
 cp Sources/assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 touch "$APP"
 
+# Sign the assembled bundle. Without this the only signature is the one the linker put on the
+# executable: its identifier is the executable's name rather than the bundle id, the Info.plist is
+# not bound and no resources are sealed, so `codesign --verify` fails outright. That matters
+# beyond tidiness -- AppKit's open/save panels are an out-of-process ViewBridge service that
+# checks the host app's identity, and a bundle that does not verify is exactly the sort of thing
+# that leaves those panels hanging in their constructor.
+codesign --force --sign - --identifier com.sir.ocr-search "$APP"
+codesign --verify --strict "$APP" || echo "warning: bundle still does not verify"
+
 echo "Built $APP"
