@@ -441,8 +441,9 @@ struct PreviewView: View {
                                     // image now, so each match still needs its own target for the hover
                                     // card to know which one the cursor is over.
                                     ForEach(Array((style.show ? matches : []).enumerated()), id: \.offset) { i, m in
-                                        let w = m.rect.width * geo.size.width + matchBoxPadding
-                                        let h = m.rect.height * geo.size.height + matchBoxPadding
+                                        let padH = m.rect.height * geo.size.height * matchBoxPaddingFraction
+                                        let w = m.rect.width * geo.size.width + padH
+                                        let h = m.rect.height * geo.size.height + padH
                                         Color.clear.contentShape(Rectangle())
                                             .frame(width: w, height: h)
                                             .position(x: m.rect.midX * geo.size.width,
@@ -456,13 +457,14 @@ struct PreviewView: View {
                                     }
                                     if let i = hoverIndex, matches.indices.contains(i) {
                                         let m = matches[i]
-                                        let w = m.rect.width * geo.size.width + matchBoxPadding
-                                        let h = m.rect.height * geo.size.height + matchBoxPadding
+                                        let padH = m.rect.height * geo.size.height * matchBoxPaddingFraction
+                                        let w = m.rect.width * geo.size.width + padH
+                                        let h = m.rect.height * geo.size.height + padH
                                         let mf = matchedFonts.indices.contains(i) ? matchedFonts[i] : nil
                                         MatchInfoPopup(text: m.text, mode: style.mode,
                                                        count: matches.filter { $0.text.caseInsensitiveCompare(m.text) == .orderedSame }.count,
                                                        boxSize: CGSize(width: w, height: h),
-                                                       fontSize: displayFontSize(i, scale: scale),
+                                                       fontSize: imageFontSize(i),
                                                        design: style.design, weight: style.weight,
                                                        boxColor: box,
                                                        textColor: (style.autoTextColor ? inkSamples[safe: i] ?? nil : nil)?.color ?? txt,
@@ -600,7 +602,7 @@ struct PreviewView: View {
                             // previous, larger number — which is how a 15pt override got stored
                             // and made every match on the page 15pt, several too large for the
                             // smaller ones. Per-match sizes are still on the hover card.
-                            let autoSizeShown = Double(((fontSizes.first ?? 17) * displayScale).rounded())
+                            let autoSizeShown = Double((fontSizes.first ?? 17).rounded())
                             let sizeBinding = Binding<Double>(
                                 get: { style.manualSize > 0 ? style.manualSize : autoSizeShown },
                                 // A TextField(value:) commits whatever it is currently showing
@@ -639,7 +641,7 @@ struct PreviewView: View {
                                         .textFieldStyle(.roundedBorder).frame(width: 38)
                                         .multilineTextAlignment(.trailing)
                                     Stepper("", value: sizeBinding, in: 1...400).labelsHidden()
-                                    Text("pt").font(.caption).foregroundStyle(.secondary)
+                                    Text("px").font(.caption).foregroundStyle(.secondary)
                                 }
                                 HStack(spacing: 6) {
                                     Toggle(isOn: Binding(get: { style.weight == "bold" }, set: { style.weight = $0 ? "bold" : "regular" })) {
@@ -772,15 +774,9 @@ struct PreviewView: View {
     private func zoomIn()   { zoom = min((zoom ?? displayScale) * Self.zoomStep, Self.zoomRange.upperBound) }
     private func zoomOut()  { zoom = max((zoom ?? displayScale) / Self.zoomStep, Self.zoomRange.lowerBound) }
 
-    /// The style handed to the renderer: this image's settings, plus how big the image is
-    /// currently being drawn. The scale is not part of the saved style — it is a property of the
-    /// window, not of the image — but the renderer needs it to turn a point size the user typed,
-    /// and the padding and outline widths, into image pixels.
-    private var drawingStyle: OverlayStyle {
-        var s = style
-        s.manualSizeScale = Double(displayScale)
-        return s
-    }
+    /// Nothing about the drawing depends on the window any more — sizes, padding and outlines are
+    /// all in the image's own pixels — so this is simply the image's style.
+    private var drawingStyle: OverlayStyle { style }
 
     /// Everything the shared overlay drawing needs, from what this window has already computed —
     /// no second OCR pass, and guaranteed to be the same inputs the on-screen layer was built
@@ -798,22 +794,12 @@ struct PreviewView: View {
         overlayLayer = overlayLayerImage(plan: currentPlan(), style: drawingStyle)
     }
 
-    /// Tracks how big the image is being drawn, and persists it (HL.manualSizeScale) so the
-    /// exporter can translate the point-based settings — a manually typed font size, the match
-    /// box padding, the style.outline width — back into the image's own pixels. Kept in step with the
-    /// window rather than snapshotted when a size is typed, because those settings are in points
-    /// and so their meaning genuinely changes as the window resizes: a fixed 24pt covers twice as
-    /// much of the image at 40% zoom as at 80%. Syncing it means an export always reproduces what
-    /// the window is showing right now.
+    /// Records how big the image is being drawn, for the zoom readout. Nothing else uses it: the
+    /// overlay is drawn in image pixels, so resizing or zooming never changes it and never needs
+    /// it redrawn — which is the whole point of zoom being a view control.
     private func setDisplayScale(_ s: CGFloat) {
         guard s > 0, s != displayScale else { return }
         displayScale = s
-        // Also kept globally, for the batch export, which has no window to ask.
-        UserDefaults.standard.set(Double(s), forKey: HL.manualSizeScale)
-        // Only a manually typed size is expressed in on-screen points, so only then does a change
-        // of scale change what should be drawn. Everything else is in image pixels and survives a
-        // resize untouched.
-        if style.manualSize > 0 { rebuildOverlay() }
     }
 
     /// Writes what is on screen — image, overlays, watermark — to a PNG the user picks.
@@ -868,7 +854,8 @@ struct PreviewView: View {
                       autoBackground: style.autoBg,
                       matchedFont: matchedFonts.indices.contains(i) ? matchedFonts[i] : nil,
                       autoFont: style.autoFont,
-                      fontSize: min(displayFontSize(i, scale: displayScale), size.height),
+                      // Image pixels clamped to the swatch, same reason as in Settings.
+                      fontSize: min(imageFontSize(i), size.height * 0.8),
                       renderedFontName: renderedFontNames.indices.contains(i) ? renderedFontNames[i] : nil,
                       sampledTextColor: inkSamples.indices.contains(i) ? inkSamples[i]?.color : nil,
                       autoTextColor: style.autoTextColor, italic: style.italic)
@@ -918,9 +905,10 @@ struct PreviewView: View {
     /// bypasses the native-pixel cache and scale multiply entirely — every match gets exactly
     /// that point size, the same way setting a size in any text editor applies to the whole
     /// selection rather than scaling each run individually.
-    private func displayFontSize(_ i: Int, scale: CGFloat) -> CGFloat {
+    /// A match's drawn size, in image pixels — what the renderer will actually use.
+    private func imageFontSize(_ i: Int) -> CGFloat {
         if style.manualSize > 0 { return style.manualSize }
-        return (fontSizes.indices.contains(i) ? fontSizes[i] : 12) * scale
+        return fontSizes.indices.contains(i) ? fontSizes[i] : 12
     }
 
     /// Fits each match's font size once, at the image's native pixel scale rather than the

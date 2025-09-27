@@ -30,14 +30,7 @@ enum HL {
     static let weight = "highlightFontWeight"    // regular | medium | bold
     static let autoFont = "highlightAutoFont"    // auto-match an installed font instead of using design
     static let manualFont = "highlightManualFont"  // overrides the auto-detected family; "" = use it as detected
-    static let manualSize = "highlightManualSize"  // fixed on-screen pt size for every match; 0 = auto-fit
-    /// Display points per native image pixel at the moment `manualSize` was last set. manualSize
-    /// is in on-screen points (that is what the toolbar field shows and edits), which says
-    /// nothing on its own about how big the text should be in the image's own pixels — the same
-    /// "24 pt" means a very different thing on a 1356px-wide screenshot shown at 40% than at
-    /// 100%. Recording the scale it was typed at lets the exporter convert it back to native
-    /// pixels and reproduce exactly what the user was looking at. 0 = never set.
-    static let manualSizeScale = "highlightManualSizeScale"
+    static let manualSize = "highlightManualSize"  // fixed size for every match, in image pixels; 0 = auto-fit
     static let italic = "highlightItalic"          // draw matched words in italic
     static let defaultBox = "#FFD60A"
     static let defaultText = "#000000"
@@ -91,13 +84,13 @@ func fittedFontSize(for text: String, weight: Font.Weight, design: Font.Design, 
     return max(size, 4)
 }
 
-/// One highlighted match: either a bounding box, or the matched text drawn to fit the box
-/// (font color, over a background patch matching the image so it covers the original text).
-/// Extra width/height PreviewView adds to each match's box for visual breathing room (see its
-/// `+ matchBoxPadding` when sizing MatchView) — split evenly on both sides since the box stays
-/// centered on the same point, i.e. `matchBoxPadding / 2` on each edge. MatchView needs to know
-/// this too, to compensate: it left-aligns text to the box's true edge, not the padded frame's.
-let matchBoxPadding: CGFloat = 4
+/// Breathing room around each match, as a fraction of that match's height, split evenly on both
+/// sides. A fraction rather than a fixed number of points: the overlay is drawn into the image at
+/// the image's own resolution, so anything expressed in on-screen points would mean a different
+/// thing at every zoom level and window size — and did, until it was measured.
+let matchBoxPaddingFraction: CGFloat = 0.3
+/// Box-mode outline, likewise as a fraction of the match's height.
+let boxOutlineFraction: CGFloat = 0.12
 
 struct MatchView: View {
     let text: String
@@ -158,18 +151,6 @@ struct MatchView: View {
                     .italic(italic)
                     .foregroundStyle(effectiveTextColor)
                     .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
-                    // Undo the box padding's left half; see matchBoxPadding. (An extra +1.5pt
-                    // empirical nudge lived here briefly, tuned to one same-framing screenshot
-                    // pair where the residual was a consistent 3px left. Broader testing across
-                    // different window positions showed that residual isn't a fixed bug: the
-                    // direction flips (3px right in other pairs, same magnitude) depending on
-                    // where the window happens to sit on screen -- almost certainly device-pixel
-                    // rounding noise from computing this position with floating-point math on
-                    // every render, vs. the source image's already-baked-in pixel grid. A single
-                    // constant can't correct a sign-flipping error, and the attempt measurably
-                    // made other cases worse, so it's removed; matchBoxPadding/2 is the part
-                    // that's actually provable and stays.)
-                    .offset(x: matchBoxPadding / 2)
                 }
                 .frame(width: size.width, height: size.height)
             } else {
@@ -319,8 +300,13 @@ struct SettingsView: View {
                               box: box.wrappedValue, textColor: txt.wrappedValue, opacity: opacity,
                               outline: outline, design: design, weight: weight,
                               background: bg.wrappedValue, autoBackground: autoBg,
-                              fontSize: manualSize > 0 ? manualSize : fittedFontSize(for: "Screen Active", weight: HL.fontWeight(weight),
-                                                        design: HL.fontDesign(design), fitting: CGSize(width: 150, height: 26)),
+                              // The swatch is 26pt tall while a manual size is in image pixels,
+                              // which is a much bigger number; clamp so the sample stays legible
+                              // rather than overflowing its own box.
+                              fontSize: min(manualSize > 0 ? manualSize
+                                            : fittedFontSize(for: "Screen Active", weight: HL.fontWeight(weight),
+                                                             design: HL.fontDesign(design),
+                                                             fitting: CGSize(width: 150, height: 26)), 24),
                               italic: italic)
                         .offset(x: -50)
                 }.frame(height: 50)

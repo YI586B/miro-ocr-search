@@ -22,8 +22,10 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     var weight = "regular"
     var autoFont = false
     var manualFont = ""
+    /// Fixed size for every match, in the image's own pixels — the same unit the auto-fitted
+    /// sizes are in, so it means one thing regardless of how the window happens to be showing the
+    /// image. 0 = fit each match individually.
     var manualSize: Double = 0
-    var manualSizeScale: Double = 0
     var italic = false
 
     // MARK: per image
@@ -102,7 +104,6 @@ struct OverlayStyle: Sendable, Codable, Equatable {
             autoFont: bool(HL.autoFont, false),
             manualFont: d.string(forKey: HL.manualFont) ?? "",
             manualSize: double(HL.manualSize, 0),
-            manualSizeScale: double(HL.manualSizeScale, 0),
             italic: bool(HL.italic, false))
     }
 }
@@ -236,16 +237,6 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
     // draws this layer at native size and lets the view scale it down alongside the photo.
     let k = canvas.width / plan.pixelSize.width
 
-    // Native pixels per on-screen point. Fixed geometry the preview expresses in points (the
-    // match box padding, the outline width, a manually typed font size) has to be scaled by this
-    // to land the same way at full resolution — 2pt of outline on an image shown at 40% is 5
-    // pixels, not 2. See HL.manualSizeScale for where the recorded value comes from; when nothing
-    // has recorded one (no preview window has ever been opened) a mid-sized window's worth of
-    // scale is assumed.
-    let haveScale = style.manualSizeScale > 0
-    let scale: CGFloat = (haveScale ? 1 / CGFloat(style.manualSizeScale)
-                                    : max(1, plan.pixelSize.width / 900)) * k
-    let pad = matchBoxPadding * scale
     let w = canvas.width, h = canvas.height
 
     for (i, m) in plan.matches.enumerated() {
@@ -253,6 +244,11 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
         // no flip needed, unlike the samplers reading top-down bitmap rows.
         let boxRect = CGRect(x: m.rect.minX * w, y: m.rect.minY * h,
                              width: m.rect.width * w, height: m.rect.height * h)
+        // Breathing room proportional to the text itself, in image pixels. Everything the
+        // overlay draws is now measured in the image's own units — nothing is derived from how
+        // big the window happens to be showing it, so zooming changes what you can see and never
+        // what is drawn.
+        let pad = boxRect.height * matchBoxPaddingFraction
         let padded = boxRect.insetBy(dx: -pad / 2, dy: -pad / 2)
 
         if style.mode == "text" {
@@ -271,14 +267,8 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
                 CGRect(x: $0.rect.minX * w, y: $0.rect.minY * h,
                        width: $0.rect.width * w, height: $0.rect.height * h)
             }
-            // A manual size is only honoured when the scale it is relative to is actually
-            // known. Guessing it is fine for a couple of pixels of padding, but a font size
-            // guessed 30% wrong is text spilling out of its own background patch, so without a
-            // recorded scale the fitted size wins — which is what the field shows as its
-            // placeholder anyway until the user overrides it.
-            let size = (style.manualSize > 0 && haveScale)
-                ? CGFloat(style.manualSize) * scale
-                : (plan.fontSizes[safe: i] ?? 12) * k
+            let size = (style.manualSize > 0 ? CGFloat(style.manualSize)
+                                             : (plan.fontSizes[safe: i] ?? 12)) * k
             drawMatchText(m.text, ink: inkRect, box: boxRect, size: size, color: inkColor,
                           family: plan.matchedFonts[safe: i] ?? nil, style: style, ctx: ctx)
         } else {
@@ -287,7 +277,7 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
             ctx.fill(padded)
             if style.outline {
                 ctx.setStrokeColor(box)
-                ctx.setLineWidth(2 * scale)
+                ctx.setLineWidth(max(1, boxRect.height * boxOutlineFraction))
                 ctx.stroke(padded)
             }
         }
