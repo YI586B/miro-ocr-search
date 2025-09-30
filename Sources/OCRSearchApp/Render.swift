@@ -22,9 +22,9 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     var weight = "regular"
     var autoFont = false
     var manualFont = ""
-    /// Fixed size for every match, in the image's own pixels — the same unit the auto-fitted
-    /// sizes are in, so it means one thing regardless of how the window happens to be showing the
-    /// image. 0 = fit each match individually.
+    /// Fixed size for every match, in points — the unit that means the same thing whatever the
+    /// image's own resolution is, and independent of how the window happens to be showing it.
+    /// 0 = fit each match individually. See RenderPlan.imageScale.
     var manualSize: Double = 0
     var italic = false
 
@@ -132,6 +132,9 @@ private func cgColor(_ c: Color) -> CGColor {
 /// reused — the preview window has already computed all of this for the image it's showing.
 struct RenderPlan: Sendable {
     var pixelSize: CGSize
+    /// Pixels per point for this image; see imagePointScale. A manual size is in points, so this
+    /// is what turns it into the pixels actually drawn.
+    var imageScale: CGFloat = 1
     var matches: [TextMatch]
     var bgColors: [Color?]
     /// The original glyphs measured off the image: colour, and the box they occupy. What the
@@ -145,13 +148,14 @@ struct RenderPlan: Sendable {
     /// page, then fit a size per match — all in the image's own pixel units.
     static func build(path: String, query: String, searchMode: SearchMode, style: OverlayStyle) -> RenderPlan {
         let px = imagePixelSize(at: path) ?? .zero
+        let pointScale = imagePointScale(at: path)
         let url = URL(fileURLWithPath: path)
         let terms = searchTerms(query, mode: searchMode)
         let matches = (style.show && !terms.isEmpty)
             ? ((try? findMatches(at: url, terms: terms)) ?? [])
             : []
         guard !matches.isEmpty, px.width > 0, px.height > 0 else {
-            return RenderPlan(pixelSize: px, matches: [], bgColors: [], ink: [],
+            return RenderPlan(pixelSize: px, imageScale: pointScale, matches: [], bgColors: [], ink: [],
                               matchedFonts: [], fontSizes: [])
         }
         let rects = matches.map(\.rect)
@@ -179,7 +183,7 @@ struct RenderPlan: Sendable {
             return effectiveFontSize(for: m.text, weight: w, design: d,
                                      matchedFamily: family, autoFont: style.autoFont, fitting: box)
         }
-        return RenderPlan(pixelSize: px, matches: matches, bgColors: bg, ink: ink,
+        return RenderPlan(pixelSize: px, imageScale: pointScale, matches: matches, bgColors: bg, ink: ink,
                           matchedFonts: families, fontSizes: sizes)
     }
 }
@@ -267,7 +271,7 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
                 CGRect(x: $0.rect.minX * w, y: $0.rect.minY * h,
                        width: $0.rect.width * w, height: $0.rect.height * h)
             }
-            let size = (style.manualSize > 0 ? CGFloat(style.manualSize)
+            let size = (style.manualSize > 0 ? CGFloat(style.manualSize) * plan.imageScale
                                              : (plan.fontSizes[safe: i] ?? 12)) * k
             drawMatchText(m.text, ink: inkRect, box: boxRect, size: size, color: inkColor,
                           family: plan.matchedFonts[safe: i] ?? nil, style: style, ctx: ctx)

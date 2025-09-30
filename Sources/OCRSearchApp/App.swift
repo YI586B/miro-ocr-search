@@ -125,6 +125,19 @@ func imagePixelSize(at path: String) -> CGSize? {
     return CGSize(width: w, height: h)
 }
 
+/// Pixels per point for an image: 2 for a screenshot saved at 144 dpi, 1 for one at 72.
+///
+/// This folder mixes both — IMG_0849 is 1356x2948 at 72 dpi while the rest are 1206x2622 at 144 —
+/// which is exactly why a size expressed in pixels means a different apparent size from one image
+/// to the next. Sizes the user sets and reads are in points, the unit that means the same thing
+/// everywhere; this is what converts them for drawing.
+func imagePointScale(at path: String) -> CGFloat {
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+          let dpi = props[kCGImagePropertyDPIWidth] as? CGFloat, dpi > 0 else { return 1 }
+    return max(1, (dpi / 72).rounded())
+}
+
 /// Approximate the image's background color immediately around each match box, so text-overlay
 /// mode can paint the redrawn word over a same-colored patch instead of just floating on top of
 /// the original characters. Samples just outside the box on all four sides — at the midpoint of
@@ -378,6 +391,8 @@ struct PreviewView: View {
     /// so the toolbar can style.show the user what auto-detection found, even while overridden.
     @State private var detectedFontName: String?
     @State private var pixelSize: CGSize = .zero
+    /// Pixels per point for this image; see imagePointScale. Sizes shown and typed are points.
+    @State private var imageScale: CGFloat = 1
     /// Fitted font size per match, computed once at the image's native pixel scale rather than
     /// on demand — fitting takes several font-metric lookups, and computing it live inside
     /// MatchView/MatchInfoPopup's body meant it re-ran on every mouse-move while hovering *any*
@@ -602,7 +617,7 @@ struct PreviewView: View {
                             // previous, larger number — which is how a 15pt override got stored
                             // and made every match on the page 15pt, several too large for the
                             // smaller ones. Per-match sizes are still on the hover card.
-                            let autoSizeShown = Double((fontSizes.first ?? 17).rounded())
+                            let autoSizeShown = Double(((fontSizes.first ?? 17) / imageScale).rounded())
                             let sizeBinding = Binding<Double>(
                                 get: { style.manualSize > 0 ? style.manualSize : autoSizeShown },
                                 // A TextField(value:) commits whatever it is currently showing
@@ -641,7 +656,7 @@ struct PreviewView: View {
                                         .textFieldStyle(.roundedBorder).frame(width: 38)
                                         .multilineTextAlignment(.trailing)
                                     Stepper("", value: sizeBinding, in: 1...400).labelsHidden()
-                                    Text("px").font(.caption).foregroundStyle(.secondary)
+                                    Text("pt").font(.caption).foregroundStyle(.secondary)
                                 }
                                 HStack(spacing: 6) {
                                     Toggle(isOn: Binding(get: { style.weight == "bold" }, set: { style.weight = $0 ? "bold" : "regular" })) {
@@ -716,6 +731,7 @@ struct PreviewView: View {
                 sampledInk(at: p, rects: rects)
             }.value
             pixelSize = await Task.detached(priority: .userInitiated) { imagePixelSize(at: p) ?? .zero }.value
+            imageScale = await Task.detached(priority: .userInitiated) { imagePointScale(at: p) }.value
             if style.autoFont { await detectFonts() }
             await recomputeFontSizes()
             recomputeRenderedFontNames()
@@ -906,9 +922,11 @@ struct PreviewView: View {
     /// that point size, the same way setting a size in any text editor applies to the whole
     /// selection rather than scaling each run individually.
     /// A match's drawn size, in image pixels — what the renderer will actually use.
+    /// A match's drawn size in points — the unit shown and typed. The renderer multiplies by the
+    /// image's own pixels-per-point to get what it draws.
     private func imageFontSize(_ i: Int) -> CGFloat {
         if style.manualSize > 0 { return style.manualSize }
-        return fontSizes.indices.contains(i) ? fontSizes[i] : 12
+        return (fontSizes.indices.contains(i) ? fontSizes[i] : 12) / imageScale
     }
 
     /// Fits each match's font size once, at the image's native pixel scale rather than the
