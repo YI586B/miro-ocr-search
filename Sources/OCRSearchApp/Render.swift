@@ -174,14 +174,13 @@ struct RenderPlan: Sendable {
             // fallback for a match whose glyphs could not be isolated — a blank box, or text on
             // a busy background — where an approximate size beats none.
             if let measured = ink[safe: i] ?? nil, measured.rect.height * px.height > 1 {
-                return inkFittedFontSize(for: m.text, weight: w, design: d,
-                                         matchedFamily: family, autoFont: style.autoFont,
+                return inkFittedFontSize(for: m.text, weight: w, design: d, matchedFamily: family,
                                          fitting: CGSize(width: measured.rect.width * px.width,
                                                          height: measured.rect.height * px.height))
             }
             let box = CGSize(width: m.rect.width * px.width, height: m.rect.height * px.height)
-            return effectiveFontSize(for: m.text, weight: w, design: d,
-                                     matchedFamily: family, autoFont: style.autoFont, fitting: box)
+            return effectiveFontSize(for: m.text, weight: w, design: d, matchedFamily: family,
+                                     fitting: box)
         }
         return RenderPlan(pixelSize: px, imageScale: pointScale, matches: matches, bgColors: bg, ink: ink,
                           matchedFonts: families, fontSizes: sizes)
@@ -347,8 +346,7 @@ private func configureTextQuality(_ ctx: CGContext) {
 private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFloat, color: CGColor,
                            family: String?, style: OverlayStyle, ctx: CGContext) {
     var font = matchFont(size: size, weight: HL.fontWeight(style.weight),
-                         design: HL.fontDesign(style.design),
-                         matchedFamily: family, autoFont: style.autoFont)
+                         design: HL.fontDesign(style.design), matchedFamily: family)
     var shear: CGFloat = 0
     if style.italic {
         let real = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)

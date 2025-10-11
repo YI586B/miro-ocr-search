@@ -200,8 +200,8 @@ private func fitBoth(text: String, family: String, bold: Bool, box: CGSize) -> C
 /// The font size MatchView actually renders a match's text at: fit to the auto-matched family
 /// when auto-font is on and a match was found, otherwise fit to the manually chosen design.
 func effectiveFontSize(for text: String, weight: Font.Weight, design: Font.Design,
-                        matchedFamily: String?, autoFont: Bool, fitting box: CGSize) -> CGFloat {
-    if autoFont, let family = matchedFamily {
+                        matchedFamily: String?, fitting box: CGSize) -> CGFloat {
+    if let family = matchedFamily {
         return fitBoth(text: text, family: family, bold: weight == .bold, box: box)
     }
     return fittedFontSize(for: text, weight: weight, design: design, fitting: box)
@@ -233,12 +233,16 @@ func glyphBounds(of text: String, font: NSFont) -> CGRect {
     return CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
 }
 
-/// The font a match is drawn in: the auto-matched family when there is one, otherwise the
-/// system font in the chosen design and weight. One place, so fitting and drawing cannot
-/// disagree about which font they are talking about.
+/// The font a match is drawn in: `matchedFamily` when there is one, otherwise the system font in
+/// the chosen design and weight. One place, so fitting and drawing cannot disagree about which
+/// font they are talking about.
+///
+/// There is no separate "is auto-matching on" flag here on purpose. Whether the family came from
+/// matching the image or from the user picking one is the caller's business; all that matters
+/// here is whether there is a family to use. A nil family *is* the instruction to fall back.
 func matchFont(size: CGFloat, weight: Font.Weight, design: Font.Design,
-               matchedFamily: String?, autoFont: Bool) -> NSFont {
-    if autoFont, let family = matchedFamily,
+               matchedFamily: String?) -> NSFont {
+    if let family = matchedFamily,
        let f = NSFont(name: renderableFontName(family: family, bold: weight == .bold), size: size) {
         return f
     }
@@ -254,10 +258,9 @@ func matchFont(size: CGFloat, weight: Font.Weight, design: Font.Design,
 /// it, so solving a size from its height made every overlay that much too large — visibly so on
 /// short strings, which never trip the width limit that was accidentally correcting the long ones.
 func inkFittedFontSize(for text: String, weight: Font.Weight, design: Font.Design,
-                       matchedFamily: String?, autoFont: Bool, fitting ink: CGSize) -> CGFloat {
+                       matchedFamily: String?, fitting ink: CGSize) -> CGFloat {
     guard !text.isEmpty, ink.width > 1, ink.height > 1 else { return 4 }
-    let probe = matchFont(size: 100, weight: weight, design: design,
-                          matchedFamily: matchedFamily, autoFont: autoFont)
+    let probe = matchFont(size: 100, weight: weight, design: design, matchedFamily: matchedFamily)
     let b = glyphBounds(of: text, font: probe)
     guard b.height > 1, b.width > 1 else { return 4 }
     var size = 100 * ink.height / b.height

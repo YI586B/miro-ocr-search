@@ -484,7 +484,7 @@ struct PreviewView: View {
                                                        boxColor: box,
                                                        textColor: (style.autoTextColor ? inkSamples[safe: i] ?? nil : nil)?.color ?? txt,
                                                        bgColor: (style.autoBg ? (bgColors.indices.contains(i) ? bgColors[i] : nil) : nil) ?? bg,
-                                                       opacity: style.opacity, matchedFont: mf, autoFont: style.autoFont,
+                                                       opacity: style.opacity, matchedFont: mf,
                                                        fontIsManual: !style.manualFont.isEmpty)
                                             .allowsHitTesting(false)   // never steals hover from the match it describes
                                             .position(x: min(hoverPoint.x + 110, geo.size.width - 100),
@@ -639,12 +639,26 @@ struct PreviewView: View {
                             )
                             VStack(alignment: .leading, spacing: 8) {
                                 sectionHeader("Font")
-                                Toggle("Match font from image", isOn: $style.autoFont)
-                                    .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font)")
+                                Toggle("Match font from image", isOn: Binding(
+                                    get: { style.autoFont },
+                                    // Turning it back on drops whatever font was picked, so the
+                                    // font detected from the image takes over again — which is
+                                    // what the toggle says it does.
+                                    set: { on in
+                                        style.autoFont = on
+                                        if on { style.manualFont = "" }
+                                    }))
+                                    .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font). Picking a font below turns this off.")
                                 HStack(spacing: 8) {
                                     Picker("", selection: Binding<String>(
                                         get: { style.manualFont },
-                                        set: { style.manualFont = $0; if !$0.isEmpty { style.autoFont = true } }
+                                        // Picking a specific font is the opposite of matching one
+                                        // from the image, so the toggle follows it; choosing
+                                        // "Auto" turns matching back on.
+                                        set: { picked in
+                                            style.manualFont = picked
+                                            style.autoFont = picked.isEmpty
+                                        }
                                     )) {
                                         Text(detectedFontName.map { "Auto (\($0))" } ?? "Auto").tag("")
                                         Divider()
@@ -668,7 +682,8 @@ struct PreviewView: View {
                                     Spacer()
                                     if !style.manualFont.isEmpty || style.manualSize > 0 || style.weight == "bold" || style.italic {
                                         Button("Reset to auto") {
-                                            style.manualFont = ""; style.manualSize = 0; style.weight = "regular"; style.italic = false
+                                            style.manualFont = ""; style.autoFont = true
+                                            style.manualSize = 0; style.weight = "regular"; style.italic = false
                                         }
                                         .font(.caption).buttonStyle(.link)
                                         .help("Back to auto-matched font/size, regular style.weight, no style.italic")
@@ -869,7 +884,6 @@ struct PreviewView: View {
                       sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: background,
                       autoBackground: style.autoBg,
                       matchedFont: matchedFonts.indices.contains(i) ? matchedFonts[i] : nil,
-                      autoFont: style.autoFont,
                       // Image pixels clamped to the swatch, same reason as in Settings.
                       fontSize: min(imageFontSize(i), size.height * 0.8),
                       renderedFontName: renderedFontNames.indices.contains(i) ? renderedFontNames[i] : nil,
@@ -910,7 +924,11 @@ struct PreviewView: View {
     /// popover's Font picker, otherwise whatever detectFonts() found. Re-run whenever either
     /// changes, without re-scanning the image (detectFonts already did the expensive part).
     private func applyFontOverride() {
-        let effective = style.manualFont.isEmpty ? detectedFontName : style.manualFont
+        // A font the user picked wins. Otherwise the detected one, but only while "Match font
+        // from image" is on — with it off and nothing picked there is no family at all, which is
+        // what tells the renderer to fall back to the Font and Weight from Settings.
+        let effective = !style.manualFont.isEmpty ? style.manualFont
+            : (style.autoFont ? detectedFontName : nil)
         matchedFonts = Array(repeating: effective, count: matches.count)
     }
 
@@ -937,7 +955,7 @@ struct PreviewView: View {
         guard !matches.isEmpty, pixelSize.width > 0, pixelSize.height > 0 else { fontSizes = []; return }
         let items = matches.map { (text: $0.text, rect: $0.rect) }
         let mf = matchedFonts, ink = inkSamples
-        let af = style.autoFont, w = style.weight, d = style.design, px = pixelSize
+        let w = style.weight, d = style.design, px = pixelSize
         fontSizes = await Task.detached(priority: .userInitiated) {
             items.enumerated().map { i, it in
                 let family = i < mf.count ? mf[i] : nil
@@ -946,13 +964,13 @@ struct PreviewView: View {
                 // a poor ruler.
                 if let measured = ink[safe: i] ?? nil, measured.rect.height * px.height > 1 {
                     return inkFittedFontSize(for: it.text, weight: HL.fontWeight(w), design: HL.fontDesign(d),
-                                             matchedFamily: family, autoFont: af,
+                                             matchedFamily: family,
                                              fitting: CGSize(width: measured.rect.width * px.width,
                                                              height: measured.rect.height * px.height))
                 }
                 let box = CGSize(width: it.rect.width * px.width, height: it.rect.height * px.height)
                 return effectiveFontSize(for: it.text, weight: HL.fontWeight(w), design: HL.fontDesign(d),
-                                         matchedFamily: family, autoFont: af, fitting: box)
+                                         matchedFamily: family, fitting: box)
             }
         }.value
     }

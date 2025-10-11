@@ -106,10 +106,9 @@ struct MatchView: View {
     var sampled: Color? = nil
     var background: Color = .white
     var autoBackground: Bool = true
-    /// Installed font family auto-matched to this text (see bestMatchingFont), used in place of
-    /// `design` when `autoFont` is on and a match was found.
+    /// The family to draw in — matched from the image, or picked by the user — used in place of
+    /// `design`. nil means neither applies, so `design` and `weight` are what to use.
     var matchedFont: String? = nil
-    var autoFont: Bool = false
     /// Precomputed by the caller (see PreviewView.recomputeFontSizes) rather than fitted here on
     /// every render: fitting requires several font-metric lookups, and this view's body re-runs
     /// on every mouse-move while hovering any match (not just this one), which made auto-font in
@@ -133,7 +132,7 @@ struct MatchView: View {
         Group {
             if mode == "text" {
                 let w = HL.fontWeight(weight), d = HL.fontDesign(design)
-                let useMatch = autoFont && renderedFontName != nil
+                let useMatch = renderedFontName != nil
                 let effectiveTextColor = (autoTextColor ? sampledTextColor : nil) ?? textColor
                 // .leading, not the default .center: the substitute font's natural width rarely
                 // matches the original's exactly (that's the whole reason fitting exists), so
@@ -175,7 +174,7 @@ struct MatchInfoPopup: View {
     let boxColor: Color, textColor: Color, bgColor: Color
     let opacity: Double
     var matchedFont: String? = nil
-    var autoFont: Bool = false
+    /// Whether `matchedFont` was picked by the user rather than matched from the image.
     var fontIsManual: Bool = false
 
     var body: some View {
@@ -185,10 +184,8 @@ struct MatchInfoPopup: View {
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
             if mode == "text" {
-                if autoFont, let mf = matchedFont {
-                    row("Font", "\(mf) \(fontIsManual ? "(picked)" : "(auto)"), \(Int(fontSize.rounded()))pt")
-                } else if autoFont {
-                    row("Font", "no match found, \(Int(fontSize.rounded()))pt")
+                if let mf = matchedFont {
+                    row("Font", "\(mf) \(fontIsManual ? "(picked)" : "(matched)"), \(Int(fontSize.rounded()))pt")
                 } else {
                     row("Font", "\(fontLabel) \(weightLabel), \(Int(fontSize.rounded()))pt")
                 }
