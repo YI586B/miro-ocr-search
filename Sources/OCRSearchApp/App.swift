@@ -417,6 +417,10 @@ struct PreviewView: View {
     /// multiplier of the fit scale, so a zoom level survives resizing the window and reads as a
     /// percentage the way it does in any other image viewer.
     @State private var zoom: CGFloat?
+    /// Bumped by Refresh. It is part of the scan task's id, so changing it re-runs the whole
+    /// scan for the same image — there is no other way to ask for that, since the task is keyed
+    /// on the path and the path has not changed.
+    @State private var reloadToken = 0
     /// The overlay look for the image on screen, kept per image rather than once for the app.
     /// Loaded when the image loads (its own saved settings, or the Settings window's defaults for
     /// an image that has none) and saved back on every change — see OverlayStyle.forImage.
@@ -581,6 +585,11 @@ struct PreviewView: View {
             // its own toolbar item — with Font/Background/Auto/Auto font all inline, this bar
             // overflowed past a handful of items and the rest silently landed in the hidden
             // ">>" menu, which is why the Background picker (and friends) seemed to vanish.
+            Button(action: refresh) { Image(systemName: "arrow.clockwise") }
+                .help("Recalculate this image: re-read it, match the font, colours and sizes again, and drop any manual overrides (⌘R)")
+                .accessibilityLabel("Recalculate")
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(scanning)
             Button { showStylePopover = true } label: { Image(systemName: "paintpalette") }
                 .help("Overlay style").accessibilityLabel("Overlay style")
                 .popover(isPresented: $showStylePopover, arrowEdge: .bottom) {
@@ -617,6 +626,7 @@ struct PreviewView: View {
                             // previous, larger number — which is how a 15pt override got stored
                             // and made every match on the page 15pt, several too large for the
                             // smaller ones. Per-match sizes are still on the hover card.
+
                             let autoSizeShown = Double(((fontSizes.first ?? 17) / imageScale).rounded())
                             let sizeBinding = Binding<Double>(
                                 get: { style.manualSize > 0 ? style.manualSize : autoSizeShown },
@@ -649,6 +659,13 @@ struct PreviewView: View {
                                         if on { style.manualFont = "" }
                                     }))
                                     .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font). Picking a font below turns this off.")
+                                // Derived from manualSize rather than stored beside it: a second
+                                // flag could disagree with the number it describes, which is
+                                // exactly what went wrong with the font toggle.
+                                Toggle("Fit size to the text in the image", isOn: Binding(
+                                    get: { style.manualSize == 0 },
+                                    set: { on in style.manualSize = on ? 0 : autoSizeShown }))
+                                    .help("Size each match to the glyphs measured on the image. Typing a size below turns this off.")
                                 HStack(spacing: 8) {
                                     Picker("", selection: Binding<String>(
                                         get: { style.manualFont },
@@ -726,11 +743,12 @@ struct PreviewView: View {
             Button { NSApp.keyWindow?.close() } label: { Label("Close", systemImage: "xmark.circle") }
         }
         .onExitCommand { NSApp.keyWindow?.close() }
-        .task(id: path) {
+        .task(id: "\(path)#\(reloadToken)") {
             style = OverlayStyle.forImage(path)
             image = NSImage(contentsOfFile: path)
             failed = image == nil
-            bgColors = []; inkSamples = []; matchedFonts = []; fontSizes = []; renderedFontNames = []; pixelSize = .zero
+            bgColors = []; inkSamples = []; matchedFonts = []; fontSizes = []; renderedFontNames = []
+            pixelSize = .zero; detectedFontName = nil
             let terms = searchTerms(query, mode: searchMode)
             guard image != nil, !terms.isEmpty else { return }
             scanning = true
@@ -747,7 +765,10 @@ struct PreviewView: View {
             }.value
             pixelSize = await Task.detached(priority: .userInitiated) { imagePixelSize(at: p) ?? .zero }.value
             imageScale = await Task.detached(priority: .userInitiated) { imagePointScale(at: p) }.value
-            if style.autoFont { await detectFonts() }
+            // Detected whenever text is being drawn, not only while matching is on: the font
+            // menu shows "Auto (X)" as the alternative to whatever is picked, and that label is
+            // only honest if X has actually been worked out.
+            if style.mode == "text" { await detectFonts() }
             await recomputeFontSizes()
             recomputeRenderedFontNames()
             rebuildOverlay()
@@ -801,6 +822,22 @@ struct PreviewView: View {
 
     private static let zoomStep: CGFloat = 1.25
     private static let zoomRange: ClosedRange<CGFloat> = 0.02...16
+
+    /// Re-reads the image and works every automatic setting out again, discarding the manual
+    /// ones. Everything an estimate can produce — the matches, each one's colours and ink extent,
+    /// the font matched to the page, the fitted sizes — comes back from the file rather than from
+    /// anything remembered, which is what makes this the thing to reach for when an image has
+    /// changed on disk or a previous scan went wrong.
+    ///
+    /// Mode and the overlay switch survive: those are how you are looking at the image, not
+    /// estimates about it.
+    private func refresh() {
+        style.manualFont = ""; style.autoFont = true
+        style.manualSize = 0
+        style.weight = "regular"; style.italic = false
+        style.autoTextColor = true; style.autoBg = true
+        reloadToken += 1
+    }
 
     private func zoomIn()   { zoom = min((zoom ?? displayScale) * Self.zoomStep, Self.zoomRange.upperBound) }
     private func zoomOut()  { zoom = max((zoom ?? displayScale) / Self.zoomStep, Self.zoomRange.lowerBound) }
