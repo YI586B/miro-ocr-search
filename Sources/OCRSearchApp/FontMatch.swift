@@ -228,10 +228,50 @@ func renderableFontName(family: String, bold: Bool) -> String {
 /// different families reserve very different amounts of it for the same visible letters. What has
 /// to line up here is ink against ink measured off a screenshot, so the measurement has to be of
 /// the ink.
-func glyphBounds(of text: String, font: NSFont) -> CGRect {
-    let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font]))
+func glyphBounds(of text: String, font: NSFont, tracking: CGFloat = 0, kerning: Bool = true) -> CGRect {
+    let attrs = overlayAttributes(font: font, tracking: tracking, kerning: kerning)
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attrs))
     return CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
 }
+
+/// The text attributes the overlay is both measured and drawn with — one definition, so a fit can
+/// never be computed against different settings than the ones used to draw.
+///
+/// `.tracking` rather than `.kern` for letter spacing: `.kern` replaces the font's own pair
+/// kerning, so using it to add space silently throws the kerning away. `.tracking` adds on top and
+/// leaves kerning intact, which is why turning kerning off is a separate thing — `.kern` set to 0.
+/// Ligatures stay off: they change a string's width after it has been fitted.
+func overlayAttributes(font: NSFont, tracking: CGFloat, kerning: Bool) -> [NSAttributedString.Key: Any] {
+    var attrs: [NSAttributedString.Key: Any] = [.font: font, .ligature: 0]
+    if tracking != 0 { attrs[.tracking] = tracking }
+    if !kerning { attrs[.kern] = 0 }
+    return attrs
+}
+
+/// Letter spacing that makes `text` span `inkWidth` — the width the original glyphs actually
+/// occupied on the image.
+///
+/// Fitting the size to the ink's height gets the letters the right size but not the right rhythm:
+/// a substitute family distributes the same total width differently, so the two drift apart across
+/// a word even when they start and end in the same place. Measured on IMG_0849, "New" sat on top
+/// of the original while "Relic" had walked several pixels right. Spacing is the dimension that
+/// fixes that, and it is worth recomputing on every font change, since how wrong the width is
+/// depends entirely on which font was chosen.
+///
+/// Clamped, because a font far enough from the original would otherwise be crammed or flung apart
+/// to force a width it was never going to make honestly.
+func inkFittedTracking(for text: String, font: NSFont, kerning: Bool, inkWidth: CGFloat) -> CGFloat {
+    let gaps = CGFloat(text.count - 1)
+    guard gaps >= 1, inkWidth > 1 else { return 0 }
+    let natural = glyphBounds(of: text, font: font, tracking: 0, kerning: kerning).width
+    guard natural > 1 else { return 0 }
+    let limit = font.pointSize * trackingLimit
+    return min(max((inkWidth - natural) / gaps, -limit), limit)
+}
+
+/// How far spacing may be pushed, as a fraction of the font size. Past this the letters stop
+/// looking like the word and start looking like a stretched one.
+let trackingLimit: CGFloat = 0.12
 
 /// The font a match is drawn in: `matchedFamily` when there is one, otherwise the system font in
 /// the chosen design and weight. One place, so fitting and drawing cannot disagree about which
@@ -278,7 +318,8 @@ func inkFittedFontSize(for text: String, weight: Font.Weight, design: Font.Desig
 /// bottom of the lowest ink to bottom of the lowest ink, which is why a string with descenders no
 /// longer sits low: the descender is part of what is being aligned rather than something the
 /// centring ignored.
-func inkDrawOrigin(for text: String, font: NSFont, ink: CGRect) -> CGPoint {
-    let b = glyphBounds(of: text, font: font)
+func inkDrawOrigin(for text: String, font: NSFont, tracking: CGFloat, kerning: Bool,
+                   ink: CGRect) -> CGPoint {
+    let b = glyphBounds(of: text, font: font, tracking: tracking, kerning: kerning)
     return CGPoint(x: ink.minX - b.minX, y: ink.minY - b.minY)
 }

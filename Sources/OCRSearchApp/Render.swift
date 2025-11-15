@@ -22,6 +22,11 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     var weight = "regular"
     var autoFont = false
     var manualFont = ""
+    /// Letter spacing, in points, applied on top of what the font does by itself. nil fits it to
+    /// each match's measured width — see inkFittedTracking.
+    var manualTracking: Double? = nil
+    /// Whether the font's own pair kerning is used. Off replaces it with even spacing.
+    var kerning: Bool = true
     /// Fixed size for every match, in points — the unit that means the same thing whatever the
     /// image's own resolution is, and independent of how the window happens to be showing it.
     /// 0 = fit each match individually. See RenderPlan.imageScale.
@@ -142,6 +147,8 @@ struct RenderPlan: Sendable {
     var ink: [InkSample?]
     var matchedFonts: [String?]
     var fontSizes: [CGFloat]
+    /// Letter spacing fitted per match so the drawn width matches the measured ink width.
+    var trackings: [CGFloat]
 
     /// Does from scratch what PreviewView does incrementally as an image loads: find the matches,
     /// sample each one's background and ink colour, auto-match a font family across the whole
@@ -156,7 +163,7 @@ struct RenderPlan: Sendable {
             : []
         guard !matches.isEmpty, px.width > 0, px.height > 0 else {
             return RenderPlan(pixelSize: px, imageScale: pointScale, matches: [], bgColors: [], ink: [],
-                              matchedFonts: [], fontSizes: [])
+                              matchedFonts: [], fontSizes: [], trackings: [])
         }
         let rects = matches.map(\.rect)
         let bg = style.mode == "text" ? sampledBackgroundColors(at: path, rects: rects) : []
@@ -182,8 +189,17 @@ struct RenderPlan: Sendable {
             return effectiveFontSize(for: m.text, weight: w, design: d, matchedFamily: family,
                                      fitting: box)
         }
+        // Spacing is fitted after the sizes, because it depends on the font at its final size.
+        let tracks = matches.enumerated().map { i, m -> CGFloat in
+            guard let measured = ink[safe: i] ?? nil else { return 0 }
+            let size = style.manualSize > 0 ? CGFloat(style.manualSize) * pointScale : sizes[i]
+            let font = matchFont(size: size, weight: HL.fontWeight(style.weight),
+                                 design: HL.fontDesign(style.design), matchedFamily: family)
+            return inkFittedTracking(for: m.text, font: font, kerning: style.kerning,
+                                     inkWidth: measured.rect.width * px.width)
+        }
         return RenderPlan(pixelSize: px, imageScale: pointScale, matches: matches, bgColors: bg, ink: ink,
-                          matchedFonts: families, fontSizes: sizes)
+                          matchedFonts: families, fontSizes: sizes, trackings: tracks)
     }
 }
 
@@ -272,8 +288,11 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
             }
             let size = (style.manualSize > 0 ? CGFloat(style.manualSize) * plan.imageScale
                                              : (plan.fontSizes[safe: i] ?? 12)) * k
+            let tracking = style.manualTracking.map { CGFloat($0) * plan.imageScale }
+                ?? (plan.trackings[safe: i] ?? 0) * k
             drawMatchText(m.text, ink: inkRect, box: boxRect, size: size, color: inkColor,
-                          family: plan.matchedFonts[safe: i] ?? nil, style: style, ctx: ctx)
+                          family: plan.matchedFonts[safe: i] ?? nil, tracking: tracking,
+                          style: style, ctx: ctx)
         } else {
             let box = cgColor(hex: style.boxHex, fallback: .systemYellow)
             ctx.setFillColor(box.copy(alpha: CGFloat(style.opacity)) ?? box)
@@ -344,7 +363,7 @@ private func configureTextQuality(_ ctx: CGContext) {
 /// Drawn through CTLine rather than NSAttributedString.draw(at:), because draw(at:) positions the
 /// line box and the whole point here is to position the baseline.
 private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFloat, color: CGColor,
-                           family: String?, style: OverlayStyle, ctx: CGContext) {
+                           family: String?, tracking: CGFloat, style: OverlayStyle, ctx: CGContext) {
     var font = matchFont(size: size, weight: HL.fontWeight(style.weight),
                          design: HL.fontDesign(style.design), matchedFamily: family)
     var shear: CGFloat = 0
@@ -356,15 +375,12 @@ private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFl
         else { shear = 0.2 }
     }
 
-    let attributed = NSAttributedString(string: text, attributes: [
-        .font: font,
-        .foregroundColor: NSColor(cgColor: color) ?? .black,
-        .ligature: 0,   // no automatic ligatures: they change a word's measured width after fitting
-    ])
-    let line = CTLineCreateWithAttributedString(attributed)
+    var attrs = overlayAttributes(font: font, tracking: tracking, kerning: style.kerning)
+    attrs[.foregroundColor] = NSColor(cgColor: color) ?? .black
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: attrs))
     let origin: CGPoint
     if let ink, ink.height > 1 {
-        origin = inkDrawOrigin(for: text, font: font, ink: ink)
+        origin = inkDrawOrigin(for: text, font: font, tracking: tracking, kerning: style.kerning, ink: ink)
     } else {
         origin = CGPoint(x: box.minX, y: box.minY + (box.height - font.capHeight) / 2)
     }
