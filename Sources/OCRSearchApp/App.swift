@@ -180,6 +180,29 @@ func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
     return rects.map(sample)
 }
 
+/// Where a glyph's edge is taken to be, as a fraction of the peak squared distance from the
+/// background. Everything the overlay draws is fitted to the box this produces, so it decides how
+/// big the redrawn text comes out.
+///
+/// It started at 0.25 — the half-way point of the antialiased ramp, since distance is squared, and
+/// where a glyph outline nominally sits. Right for a clean outline, wrong for a screenshot: text
+/// on an image carries a softer skirt than the geometry suggests, so 0.25 clipped the outermost
+/// lit row off every measurement and every fit came out slightly small.
+///
+/// Calibrated instead, over 30 cases (ten matches across five screenshots, each in three fonts),
+/// by rendering the fit and comparing its ink against the original's:
+///
+///     edge   mean bias   mean |error|   worst
+///     0.25     -1.05%       2.43%        7.7%
+///     0.20     -0.79%       2.17%        7.7%
+///     0.16     -0.05%       1.43%        5.1%
+///     0.12     +0.87%       1.89%        6.9%
+///     0.08     +1.42%       2.45%        6.9%
+///
+/// 0.16 is the turning point on all three measures at once, which is what makes it a calibration
+/// rather than a number that suited one screenshot.
+let inkEdgeFraction: CGFloat = 0.16
+
 /// One match's original text as measured off the image: the colour of its glyphs, and the box
 /// those glyphs actually occupy (normalised, bottom-left origin, like Vision's rects). Both come
 /// out of the same single pixel scan, since finding the ink is most of the work either way.
@@ -294,7 +317,7 @@ func sampledInk(at path: String, rects: [CGRect]) -> [InkSample?] {
         // on IMG_0849 it runs 8-11% taller than the ink inside it and starts several pixels to
         // the left, so deriving a font size from the box's height came out that much too big and
         // deriving a left edge from the box's edge started that much too early.
-        let edge = peak * 0.25
+        let edge = peak * inkEdgeFraction
         var minX = Int.max, maxX = Int.min, minY = Int.max, maxY = Int.min
         for c in candidates where c.distance >= edge {
             minX = min(minX, c.x); maxX = max(maxX, c.x)
