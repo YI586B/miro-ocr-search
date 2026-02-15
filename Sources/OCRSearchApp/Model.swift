@@ -218,7 +218,7 @@ final class Model: ObservableObject {
         switch format {
         case .csv, .markdown:
             let isCSV = format == .csv
-            let panel = NSSavePanel()
+            let panel = Panels.save
             panel.nameFieldStringValue = isCSV ? "ocr-results.csv" : "ocr-results.md"
             panel.allowedContentTypes = [isCSV ? .commaSeparatedText : UTType(filenameExtension: "md") ?? .plainText]
             present(panel) { [weak self] in
@@ -226,8 +226,8 @@ final class Model: ObservableObject {
                 self.writeText(hits, isCSV: isCSV, to: url)
             }
         case .images:
-            let panel = NSOpenPanel()
-            panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.canCreateDirectories = true
+            let panel = Panels.openPanel(dir: true)
+            panel.canCreateDirectories = true
             panel.prompt = "Export here"
             panel.message = "Choose where to write the images, with their overlays and watermark."
             present(panel) { [weak self] in
