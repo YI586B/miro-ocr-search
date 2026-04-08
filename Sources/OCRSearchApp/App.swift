@@ -491,108 +491,113 @@ struct PreviewView: View {
         let bg = Color(hex: style.bgHex) ?? .white
         let boxBinding = Binding<Color>(get: { box }, set: { style.boxHex = $0.hexString })
         let txtBinding = Binding<Color>(get: { txt }, set: { style.textHex = $0.hexString })
-        Group {
-            if let image {
-                // Fit until the user zooms, then a fixed scale inside a scroll view. The overlay
-                // layer is a single image scaled alongside the photo, so zooming costs nothing
-                // beyond the resample — nothing is re-laid-out or redrawn.
-                GeometryReader { outer in
-                    let fit = pixelSize.width > 0 && pixelSize.height > 0
-                        ? min(outer.size.width / pixelSize.width, outer.size.height / pixelSize.height)
-                        : 1
-                    let z = zoom ?? fit
-                    let drawn = CGSize(width: max(pixelSize.width * z, 1), height: max(pixelSize.height * z, 1))
-                    ScrollView([.horizontal, .vertical]) {
-                        Image(nsImage: image).resizable()
-                            .frame(width: drawn.width, height: drawn.height)
-                            .overlay(GeometryReader { geo in
-                                // Fitted sizes are cached at the image's native pixel scale (fontSizes);
-                                // this is the cheap per-frame conversion to on-screen points.
-                                let scale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1
-                                ZStack(alignment: .topLeading) {
-                                    if style.show, let overlayLayer {
-                                        Image(nsImage: overlayLayer).resizable()
-                                            .frame(width: geo.size.width, height: geo.size.height)
-                                            .allowsHitTesting(false)
-                                    }
-                                    // Invisible, and only for hit testing: the overlay itself is one
-                                    // image now, so each match still needs its own target for the hover
-                                    // card to know which one the cursor is over.
-                                    ForEach(Array((style.show ? matches : []).enumerated()), id: \.offset) { i, m in
-                                        let padH = m.rect.height * geo.size.height * matchBoxPaddingFraction
-                                        let w = m.rect.width * geo.size.width + padH
-                                        let h = m.rect.height * geo.size.height + padH
-                                        Color.clear.contentShape(Rectangle())
-                                            .frame(width: w, height: h)
-                                            .position(x: m.rect.midX * geo.size.width,
-                                                      y: (1 - m.rect.midY) * geo.size.height)
-                                            .onContinuousHover(coordinateSpace: .named("preview")) { phase in
-                                                switch phase {
-                                                case .active(let p): hoverIndex = i; hoverPoint = p
-                                                case .ended: if hoverIndex == i { hoverIndex = nil }
+        VStack(spacing: 0) {
+            Group {
+                if let image {
+                    // Fit until the user zooms, then a fixed scale inside a scroll view. The overlay
+                    // layer is a single image scaled alongside the photo, so zooming costs nothing
+                    // beyond the resample — nothing is re-laid-out or redrawn.
+                    GeometryReader { outer in
+                        let fit = pixelSize.width > 0 && pixelSize.height > 0
+                            ? min(outer.size.width / pixelSize.width, outer.size.height / pixelSize.height)
+                            : 1
+                        let z = zoom ?? fit
+                        let drawn = CGSize(width: max(pixelSize.width * z, 1), height: max(pixelSize.height * z, 1))
+                        ScrollView([.horizontal, .vertical]) {
+                            Image(nsImage: image).resizable()
+                                .frame(width: drawn.width, height: drawn.height)
+                                .overlay(GeometryReader { geo in
+                                    // Fitted sizes are cached at the image's native pixel scale (fontSizes);
+                                    // this is the cheap per-frame conversion to on-screen points.
+                                    let scale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1
+                                    ZStack(alignment: .topLeading) {
+                                        if style.show, let overlayLayer {
+                                            Image(nsImage: overlayLayer).resizable()
+                                                .frame(width: geo.size.width, height: geo.size.height)
+                                                .allowsHitTesting(false)
+                                        }
+                                        // Invisible, and only for hit testing: the overlay itself is one
+                                        // image now, so each match still needs its own target for the hover
+                                        // card to know which one the cursor is over.
+                                        ForEach(Array((style.show ? matches : []).enumerated()), id: \.offset) { i, m in
+                                            let padH = m.rect.height * geo.size.height * matchBoxPaddingFraction
+                                            let w = m.rect.width * geo.size.width + padH
+                                            let h = m.rect.height * geo.size.height + padH
+                                            Color.clear.contentShape(Rectangle())
+                                                .frame(width: w, height: h)
+                                                .position(x: m.rect.midX * geo.size.width,
+                                                          y: (1 - m.rect.midY) * geo.size.height)
+                                                .onContinuousHover(coordinateSpace: .named("preview")) { phase in
+                                                    switch phase {
+                                                    case .active(let p): hoverIndex = i; hoverPoint = p
+                                                    case .ended: if hoverIndex == i { hoverIndex = nil }
+                                                    }
                                                 }
+                                        }
+                                        if let i = hoverIndex, matches.indices.contains(i) {
+                                            let m = matches[i]
+                                            let padH = m.rect.height * geo.size.height * matchBoxPaddingFraction
+                                            let w = m.rect.width * geo.size.width + padH
+                                            let h = m.rect.height * geo.size.height + padH
+                                            let mf = matchedFonts.indices.contains(i) ? matchedFonts[i] : nil
+                                            MatchInfoPopup(text: m.text, mode: style.mode,
+                                                           count: matches.filter { $0.text.caseInsensitiveCompare(m.text) == .orderedSame }.count,
+                                                           boxSize: CGSize(width: w, height: h),
+                                                           fontSize: imageFontSize(i),
+                                                           design: style.design, weight: style.weight,
+                                                           boxColor: box,
+                                                           textColor: (style.autoTextColor ? inkSamples[safe: i] ?? nil : nil)?.color ?? txt,
+                                                           bgColor: (style.autoBg ? (bgColors.indices.contains(i) ? bgColors[i] : nil) : nil) ?? bg,
+                                                           opacity: style.opacity, matchedFont: mf,
+                                                           fontIsManual: !style.manualFont.isEmpty)
+                                                .allowsHitTesting(false)   // never steals hover from the match it describes
+                                                .position(x: min(hoverPoint.x + 110, geo.size.width - 100),
+                                                          y: min(hoverPoint.y + 70, geo.size.height - 60))
+                                        }
+                                        // Follows the overlay toggle: turning the overlay off shows the
+                                        // image as it is, and a watermark left behind would contradict
+                                        // that. Sized and placed in the image's own pixels and then
+                                        // scaled to the window, so the preview shows the badge at the
+                                        // same size relative to the image that an export writes --
+                                        // see watermarkPixelSize.
+                                        let ww = watermarkPixelSize.width * scale
+                                        let wh = watermarkPixelSize.height * scale
+                                        if style.show {
+                                        ZStack {
+                                            RoundedRectangle(cornerRadius: wh * watermarkCornerFraction)
+                                                .fill(watermarkBackground)
+                                            if let watermarkArtwork {
+                                                Image(nsImage: watermarkArtwork).resizable().scaledToFit()
+                                                    .frame(width: ww * watermarkWordmarkWidthFraction)
                                             }
-                                    }
-                                    if let i = hoverIndex, matches.indices.contains(i) {
-                                        let m = matches[i]
-                                        let padH = m.rect.height * geo.size.height * matchBoxPaddingFraction
-                                        let w = m.rect.width * geo.size.width + padH
-                                        let h = m.rect.height * geo.size.height + padH
-                                        let mf = matchedFonts.indices.contains(i) ? matchedFonts[i] : nil
-                                        MatchInfoPopup(text: m.text, mode: style.mode,
-                                                       count: matches.filter { $0.text.caseInsensitiveCompare(m.text) == .orderedSame }.count,
-                                                       boxSize: CGSize(width: w, height: h),
-                                                       fontSize: imageFontSize(i),
-                                                       design: style.design, weight: style.weight,
-                                                       boxColor: box,
-                                                       textColor: (style.autoTextColor ? inkSamples[safe: i] ?? nil : nil)?.color ?? txt,
-                                                       bgColor: (style.autoBg ? (bgColors.indices.contains(i) ? bgColors[i] : nil) : nil) ?? bg,
-                                                       opacity: style.opacity, matchedFont: mf,
-                                                       fontIsManual: !style.manualFont.isEmpty)
-                                            .allowsHitTesting(false)   // never steals hover from the match it describes
-                                            .position(x: min(hoverPoint.x + 110, geo.size.width - 100),
-                                                      y: min(hoverPoint.y + 70, geo.size.height - 60))
-                                    }
-                                    // Follows the overlay toggle: turning the overlay off shows the
-                                    // image as it is, and a watermark left behind would contradict
-                                    // that. Sized and placed in the image's own pixels and then
-                                    // scaled to the window, so the preview shows the badge at the
-                                    // same size relative to the image that an export writes --
-                                    // see watermarkPixelSize.
-                                    let ww = watermarkPixelSize.width * scale
-                                    let wh = watermarkPixelSize.height * scale
-                                    if style.show {
-                                    ZStack {
-                                        RoundedRectangle(cornerRadius: wh * watermarkCornerFraction)
-                                            .fill(watermarkBackground)
-                                        if let watermarkArtwork {
-                                            Image(nsImage: watermarkArtwork).resizable().scaledToFit()
-                                                .frame(width: ww * watermarkWordmarkWidthFraction)
+                                        }
+                                        .frame(width: ww, height: wh)
+                                        .opacity(watermarkOpacity)
+                                        .allowsHitTesting(false)
+                                        .position(x: geo.size.width - watermarkRightMargin * scale - ww / 2,
+                                                  y: geo.size.height - watermarkBottomMargin * scale - wh / 2)
                                         }
                                     }
-                                    .frame(width: ww, height: wh)
-                                    .opacity(watermarkOpacity)
-                                    .allowsHitTesting(false)
-                                    .position(x: geo.size.width - watermarkRightMargin * scale - ww / 2,
-                                              y: geo.size.height - watermarkBottomMargin * scale - wh / 2)
-                                    }
-                                }
-                                .coordinateSpace(name: "preview")
-                                .onAppear { setDisplayScale(scale) }
-                                .onChange(of: geo.size) { _ in setDisplayScale(pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1) }
-                                .onChange(of: pixelSize) { _ in setDisplayScale(pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1) }
-                            })
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .padding(12)
+                                    .coordinateSpace(name: "preview")
+                                    .onAppear { setDisplayScale(scale) }
+                                    .onChange(of: geo.size) { _ in setDisplayScale(pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1) }
+                                    .onChange(of: pixelSize) { _ in setDisplayScale(pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1) }
+                                })
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .padding(12)
+                        }
+                        // Centres the image while it is smaller than the window, which is most of the
+                        // time at fit scale, instead of pinning it to the top-left.
+                        .frame(width: outer.size.width, height: outer.size.height)
+                        .onChange(of: fit) { f in if zoom == nil { setDisplayScale(f) } }
                     }
-                    // Centres the image while it is smaller than the window, which is most of the
-                    // time at fit scale, instead of pinning it to the top-left.
-                    .frame(width: outer.size.width, height: outer.size.height)
-                    .onChange(of: fit) { f in if zoom == nil { setDisplayScale(f) } }
                 }
+                else if failed { Text("Can't open \(path)").foregroundStyle(.secondary) }
+                else { ProgressView() }
             }
-            else if failed { Text("Can't open \(path)").foregroundStyle(.secondary) }
-            else { ProgressView() }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider()
+            imageInfoBar
         }
         .frame(minWidth: 400, minHeight: 400)
         .navigationTitle((path as NSString).lastPathComponent)
@@ -998,6 +1003,35 @@ struct PreviewView: View {
                         }
                     }
         }
+    }
+
+    /// A quiet line under the image saying what it is and where it came from.
+    ///
+    /// Both are worth having in sight. The resolution because every size the overlay works in is
+    /// in the image's own pixels, and whether a screenshot stores one or two of those per point
+    /// decides what a size in points comes out as. The folder because a search spans a whole
+    /// directory of near-identically named screenshots, and the title bar only carries the file
+    /// name.
+    private var imageInfoBar: some View {
+        HStack(spacing: 8) {
+            if pixelSize.width > 0 {
+                Text("\(Int(pixelSize.width)) × \(Int(pixelSize.height))").monospacedDigit()
+                if imageScale != 1 {
+                    Text("@\(Int(imageScale))x")
+                        .help("Stores \(Int(imageScale)) pixels per point, so a size in points is \(Int(imageScale))× that many pixels")
+                }
+                Text("·")
+            }
+            Text((path as NSString).deletingLastPathComponent)
+                .truncationMode(.middle).lineLimit(1)
+                .help(path)
+            Spacer(minLength: 0)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .textSelection(.enabled)
     }
 
     /// Small all-caps caption used to head each group of controls in the style popover — the
