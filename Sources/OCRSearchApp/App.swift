@@ -242,6 +242,11 @@ let inkEdgeFraction: CGFloat = 0.16
 struct InkSample: Sendable {
     var rect: CGRect
     var color: Color
+    /// How soft this text's edges are: the distance, in pixels, over which a stroke rises from 20%
+    /// to 80% of its contrast with the background. About 1.0 for text drawn straight onto the
+    /// pixel grid, more for text that has been through a resample — IMG_0849 is a 12% upscale of a
+    /// smaller screenshot and measures ~1.55 where a native one measures ~1.39.
+    var edgeRise: CGFloat = 0
 }
 
 /// Approximate the color of the text itself within each match box, for text-overlay mode to draw
@@ -362,7 +367,30 @@ func sampledInk(at path: String, rects: [CGRect]) -> [InkSample?] {
                              y: 1 - CGFloat(maxY + step) / CGFloat(h),
                              width: CGFloat(maxX + step - minX) / CGFloat(w),
                              height: CGFloat(maxY + step - minY) / CGFloat(h))
-        return InkSample(rect: inkRect, color: color)
+        // Edge softness, from the same rows: for each horizontal run that climbs from background
+        // to ink, how far it takes to go from 20% to 80% of the way. Measured here because this is
+        // the one place that already knows where the ink is and what it contrasts against.
+        var rises: [CGFloat] = []
+        for py in stride(from: max(minY, pxY0), through: min(maxY, pxY1), by: step) {
+            var row: [CGFloat] = []
+            for px in stride(from: minX, through: maxX, by: step) {
+                guard let c = rep.colorAt(x: px, y: py) else { row.append(0); continue }
+                let dr = c.redComponent - bgR, dg = c.greenComponent - bgG, db = c.blueComponent - bgB
+                row.append((dr * dr + dg * dg + db * db).squareRoot())
+            }
+            guard let hi = row.max(), hi > 0.05 else { continue }
+            let t20 = hi * 0.2, t80 = hi * 0.8
+            var start: Int? = nil
+            for i in row.indices {
+                if row[i] >= t20 && row[i] < t80 { if start == nil { start = i } }
+                else {
+                    if let st = start, row[i] >= t80, i - st <= 8 { rises.append(CGFloat((i - st) * step)) }
+                    start = nil
+                }
+            }
+        }
+        let rise = rises.isEmpty ? 0 : rises.reduce(0, +) / CGFloat(rises.count)
+        return InkSample(rect: inkRect, color: color, edgeRise: rise)
     }
     return rects.map(sample)
 }
@@ -459,6 +487,8 @@ struct PreviewView: View {
     /// Letter spacing fitted per match, alongside the sizes and for the same reason: it depends on
     /// the font, so it is worked out again whenever the font, weight or size changes.
     @State private var trackings: [CGFloat] = []
+    /// Blur fitted per match so the redrawn text is as soft as the text it covers.
+    @State private var smoothness: [CGFloat] = []
     /// Exact renderable name (PostScript name) for each match's matchedFont, resolved once
     /// instead of on every render — see renderableFontName.
     @State private var renderedFontNames: [String?] = []
@@ -716,7 +746,7 @@ struct PreviewView: View {
             style = OverlayStyle.forImage(path)
             image = NSImage(contentsOfFile: path)
             failed = image == nil
-            bgColors = []; inkSamples = []; matchedFonts = []; fontSizes = []; trackings = []; renderedFontNames = []
+            bgColors = []; inkSamples = []; matchedFonts = []; fontSizes = []; trackings = []; smoothness = []; renderedFontNames = []
             pixelSize = .zero; detectedFontName = nil
             let terms = searchTerms(query, mode: searchMode)
             guard image != nil, !terms.isEmpty else { return }
@@ -804,7 +834,8 @@ struct PreviewView: View {
     /// estimates about it.
     private func refresh() {
         style.manualFont = ""; style.autoFont = true
-        style.manualSize = 0; style.manualTracking = nil; style.kerning = true
+        style.manualSize = 0; style.manualTracking = nil; style.manualSmoothness = nil
+        style.kerning = true
         style.weight = "regular"; style.italic = false
         style.autoTextColor = true; style.autoBg = true
         reloadToken += 1
@@ -823,7 +854,7 @@ struct PreviewView: View {
     private func currentPlan() -> RenderPlan {
         RenderPlan(pixelSize: pixelSize, imageScale: imageScale, matches: style.show ? matches : [],
                    bgColors: bgColors, ink: inkSamples, matchedFonts: matchedFonts,
-                   fontSizes: fontSizes, trackings: trackings)
+                   fontSizes: fontSizes, trackings: trackings, smoothness: smoothness)
     }
 
     /// Redraws the overlay layer. Cheap relative to the scan that produced its inputs (no OCR, no
@@ -980,6 +1011,31 @@ struct PreviewView: View {
                             Toggle("Kerning", isOn: $style.kerning)
                                 .help("Use the font's own pair kerning. Off spaces every pair evenly.")
                         }
+                        // Softness, matched to how soft the covered text's edges are. Text drawn
+                        // fresh is crisper than text that has been through a screenshot's
+                        // resampling, and on an image that has been scaled the difference shows.
+                        let fittedSmoothness = Double(((smoothness.first ?? 0) / imageScale * 100).rounded() / 100)
+                        let smoothBinding = Binding<Double>(
+                            get: { style.manualSmoothness ?? fittedSmoothness },
+                            set: { typed in
+                                guard style.manualSmoothness != nil || abs(typed - fittedSmoothness) >= 0.005
+                                else { return }
+                                style.manualSmoothness = max(typed, 0)
+                            }
+                        )
+                        Toggle("Fit smoothness to the text in the image", isOn: Binding(
+                            get: { style.manualSmoothness == nil },
+                            set: { on in style.manualSmoothness = on ? nil : fittedSmoothness }))
+                            .help("Soften the redrawn text to the same degree as the text it covers. Typing a value below turns this off.")
+                        HStack(spacing: 8) {
+                            Text("Smoothness").font(.caption).foregroundStyle(.secondary)
+                            TextField("", value: smoothBinding, format: .number.precision(.fractionLength(0...2)))
+                                .textFieldStyle(.roundedBorder).frame(width: 46)
+                                .multilineTextAlignment(.trailing)
+                            Stepper("", value: smoothBinding, in: 0...10, step: 0.05).labelsHidden()
+                            Text("pt").font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                        }
                         HStack(spacing: 6) {
                             Toggle(isOn: Binding(get: { style.weight == "bold" }, set: { style.weight = $0 ? "bold" : "regular" })) {
                                 Text("B").bold()
@@ -989,7 +1045,7 @@ struct PreviewView: View {
                             }.toggleStyle(.button).help("Italic").accessibilityLabel("Italic")
                             Spacer()
                             if !style.manualFont.isEmpty || style.manualSize > 0
-                                || style.manualTracking != nil || !style.kerning
+                                || style.manualTracking != nil || style.manualSmoothness != nil || !style.kerning
                                 || style.weight == "bold" || style.italic {
                                 Button("Reset to auto") {
                                     style.manualFont = ""; style.autoFont = true
@@ -1149,6 +1205,8 @@ struct PreviewView: View {
             }
         }.value
         recomputeTrackings()
+        // Softness comes straight from what was measured on the image, so it needs no font.
+        smoothness = inkSamples.map { smoothnessToMatch(originalRise: $0?.edgeRise ?? 0) }
     }
 
     /// Letter spacing per match, fitted so the drawn width matches the width the original glyphs

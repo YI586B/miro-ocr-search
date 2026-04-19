@@ -323,3 +323,37 @@ func inkDrawOrigin(for text: String, font: NSFont, tracking: CGFloat, kerning: B
     let b = glyphBounds(of: text, font: font, tracking: tracking, kerning: kerning)
     return CGPoint(x: ink.minX - b.minX, y: ink.minY - b.minY)
 }
+
+// MARK: - matching how soft the original's edges are
+
+/// The edge softness text drawn by drawMatchText comes out with, in pixels of 20-80% rise.
+///
+/// Measured across four families at three sizes: our own drawing lands between 1.18 and 1.35 and
+/// does not vary meaningfully with size or family, because it is set by the rasteriser's
+/// antialiasing rather than by the glyphs. A constant is therefore honest here, and far cheaper
+/// than rendering each match twice to find out.
+let drawnEdgeRise: CGFloat = 1.28
+
+/// A Gaussian blur, as a standard deviation in pixels, that takes text from `drawnEdgeRise` to the
+/// softness measured on the original.
+///
+/// Blurring convolves the two edge profiles, so their widths add in quadrature: an edge of width
+/// `a` blurred by a Gaussian of width `b` comes out at sqrt(a² + b²). Solving for the blur gives
+/// the expression below, where a Gaussian's own 20-80% rise is 1.683 sigma.
+///
+/// In practice this lands the drawn edge most of the way to the target rather than exactly on it
+/// — measured, a 1.27px edge asked to reach 1.56px arrived at 1.49px. The model is approximate
+/// (CIGaussianBlur's radius is not quite a standard deviation, and drawnEdgeRise is a constant
+/// where the real figure varies by a tenth of a pixel or so), and the measurement itself is coarse
+/// at this scale, since an edge width of about one pixel is being read off a whole-pixel grid.
+/// Calibrating a correction out of numbers that noisy would be fitting the noise; the manual
+/// override is there for anyone who wants to push it further.
+///
+/// Zero when the original is no softer than what we draw. Sharpening is not on the table — the
+/// detail a resample took out is gone — so the honest answer there is to leave it alone, which is
+/// also what the measurements say to do: across eight matches the original was the *crisper* one
+/// in three of them.
+func smoothnessToMatch(originalRise: CGFloat) -> CGFloat {
+    guard originalRise > drawnEdgeRise else { return 0 }
+    return (originalRise * originalRise - drawnEdgeRise * drawnEdgeRise).squareRoot() / 1.683
+}

@@ -27,6 +27,9 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     var manualTracking: Double? = nil
     /// Whether the font's own pair kerning is used. Off replaces it with even spacing.
     var kerning: Bool = true
+    /// How much the redrawn text is softened, as a Gaussian standard deviation in points. nil
+    /// matches each match's own measured edge softness — see smoothnessToMatch.
+    var manualSmoothness: Double? = nil
     /// Fixed size for every match, in points — the unit that means the same thing whatever the
     /// image's own resolution is, and independent of how the window happens to be showing it.
     /// 0 = fit each match individually. See RenderPlan.imageScale.
@@ -149,6 +152,8 @@ struct RenderPlan: Sendable {
     var fontSizes: [CGFloat]
     /// Letter spacing fitted per match so the drawn width matches the measured ink width.
     var trackings: [CGFloat]
+    /// Blur fitted per match so the redrawn text is as soft as the text it covers.
+    var smoothness: [CGFloat] = []
 
     /// Does from scratch what PreviewView does incrementally as an image loads: find the matches,
     /// sample each one's background and ink colour, auto-match a font family across the whole
@@ -198,8 +203,11 @@ struct RenderPlan: Sendable {
             return inkFittedTracking(for: m.text, font: font, kerning: style.kerning,
                                      inkWidth: measured.rect.width * px.width)
         }
+        let smooth = matches.indices.map { i -> CGFloat in
+            smoothnessToMatch(originalRise: (ink[safe: i] ?? nil)?.edgeRise ?? 0)
+        }
         return RenderPlan(pixelSize: px, imageScale: pointScale, matches: matches, bgColors: bg, ink: ink,
-                          matchedFonts: families, fontSizes: sizes, trackings: tracks)
+                          matchedFonts: families, fontSizes: sizes, trackings: tracks, smoothness: smooth)
     }
 }
 
@@ -290,9 +298,11 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
                                              : (plan.fontSizes[safe: i] ?? 12)) * k
             let tracking = style.manualTracking.map { CGFloat($0) * plan.imageScale }
                 ?? (plan.trackings[safe: i] ?? 0) * k
+            let blur = style.manualSmoothness.map { CGFloat($0) * plan.imageScale }
+                ?? (plan.smoothness[safe: i] ?? 0) * k
             drawMatchText(m.text, ink: inkRect, box: boxRect, size: size, color: inkColor,
                           family: plan.matchedFonts[safe: i] ?? nil, tracking: tracking,
-                          style: style, ctx: ctx)
+                          blur: blur, style: style, ctx: ctx)
         } else {
             let box = cgColor(hex: style.boxHex, fallback: .systemYellow)
             ctx.setFillColor(box.copy(alpha: CGFloat(style.opacity)) ?? box)
@@ -338,7 +348,7 @@ func overlayLayerImage(plan: RenderPlan, style: OverlayStyle) -> NSImage? {
 ///    In a file it shows up as coloured fringing on every stem — obvious once the image is
 ///    viewed on a different display, scaled, or placed on a Miro board. Plain greyscale
 ///    antialiasing is what a rendered image wants.
-private func configureTextQuality(_ ctx: CGContext) {
+func configureTextQuality(_ ctx: CGContext) {
     ctx.setShouldAntialias(true)
     ctx.setAllowsAntialiasing(true)
     ctx.setShouldSubpixelQuantizeFonts(false)
@@ -363,7 +373,8 @@ private func configureTextQuality(_ ctx: CGContext) {
 /// Drawn through CTLine rather than NSAttributedString.draw(at:), because draw(at:) positions the
 /// line box and the whole point here is to position the baseline.
 private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFloat, color: CGColor,
-                           family: String?, tracking: CGFloat, style: OverlayStyle, ctx: CGContext) {
+                           family: String?, tracking: CGFloat, blur: CGFloat,
+                           style: OverlayStyle, ctx: CGContext) {
     var font = matchFont(size: size, weight: HL.fontWeight(style.weight),
                          design: HL.fontDesign(style.design), matchedFamily: family)
     var shear: CGFloat = 0
@@ -385,6 +396,12 @@ private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFl
         origin = CGPoint(x: box.minX, y: box.minY + (box.height - font.capHeight) / 2)
     }
 
+    // Drawn into a scratch layer first when it has to be softened, since a blur needs pixels
+    // around the glyphs to spread into and must not touch the patch underneath.
+    if blur > 0.05, let softened = blurredText(line: line, origin: origin, shear: shear, blur: blur) {
+        ctx.draw(softened.image, in: softened.rect)
+        return
+    }
     ctx.saveGState()
     if shear != 0 {
         ctx.translateBy(x: origin.x, y: origin.y)
@@ -395,6 +412,44 @@ private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFl
     }
     CTLineDraw(line, ctx)
     ctx.restoreGState()
+}
+
+/// The line rendered on its own and Gaussian-blurred, ready to composite where it belongs.
+///
+/// The margin is generous on purpose: a Gaussian does not stop at three sigma, and clipping its
+/// tail leaves a visible straight edge where the softness is cut off.
+private func blurredText(line: CTLine, origin: CGPoint, shear: CGFloat,
+                         blur: CGFloat) -> (image: CGImage, rect: CGRect)? {
+    let bounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+    let margin = ceil(blur * 4) + 2
+    let w = Int(ceil(bounds.width + shear * bounds.height + margin * 2))
+    let h = Int(ceil(bounds.height + margin * 2))
+    guard w > 0, h > 0, w < 8000, h < 8000,
+          let scratch = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    configureTextQuality(scratch)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: scratch, flipped: false)
+    scratch.saveGState()
+    scratch.translateBy(x: margin - bounds.minX, y: margin - bounds.minY)
+    if shear != 0 { scratch.concatenate(CGAffineTransform(a: 1, b: 0, c: shear, d: 1, tx: 0, ty: 0)) }
+    scratch.textPosition = .zero
+    CTLineDraw(line, scratch)
+    scratch.restoreGState()
+    NSGraphicsContext.restoreGraphicsState()
+
+    guard let drawn = scratch.makeImage() else { return nil }
+    let input = CIImage(cgImage: drawn)
+    guard let filter = CIFilter(name: "CIGaussianBlur",
+                                parameters: [kCIInputImageKey: input, kCIInputRadiusKey: blur]),
+          let output = filter.outputImage,
+          // clamped back to the scratch bounds: the filter's extent grows by the blur radius
+          let blurred = CIContext(options: [.workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
+            .createCGImage(output, from: input.extent) else { return nil }
+    let rect = CGRect(x: origin.x + bounds.minX - margin, y: origin.y + bounds.minY - margin,
+                      width: CGFloat(w), height: CGFloat(h))
+    return (blurred, rect)
 }
 
 /// The same bottom-right badge the preview stamps on every image, at the same pixel size and
