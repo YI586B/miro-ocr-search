@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ImageIO
+import CryptoKit
 import UniformTypeIdentifiers
 import OCRSearchCore
 
@@ -77,6 +78,49 @@ struct MiroBadge: View {
     }
 }
 
+/// Whether the badge is stamped at all, and the gate on turning it off.
+///
+/// App-wide rather than per image: it is a decision about what leaves this app, not about how one
+/// screenshot is being looked at, so it is not part of OverlayStyle and does not travel with a
+/// saved per-image look.
+///
+/// The gate is a speed bump and worth being honest about as one. A password compiled into an app
+/// can be recovered from it — storing the hash rather than the text keeps it out of `strings`, but
+/// anyone determined can still patch the check out. It stops the badge being switched off by
+/// accident or in passing, which is what a gate like this can actually do.
+enum Watermark {
+    static let key = "watermarkEnabled"
+    private static let digest = "21a0ff4404a302a0d5435a67e1e62accea0c07b0c48730576f1369808d4597d9"
+
+    static var isOn: Bool {
+        let d = UserDefaults.standard
+        return d.object(forKey: key) == nil ? true : d.bool(forKey: key)
+    }
+
+    static func matches(_ attempt: String) -> Bool {
+        SHA256.hash(data: Data(attempt.utf8)).map { String(format: "%02x", $0) }.joined() == digest
+    }
+
+    /// Asks for the password. Returns true only if it was right.
+    @MainActor static func confirmTurnOff() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Turn off the watermark?"
+        alert.informativeText = "The badge will be left off previews and off anything exported. Enter the password to continue."
+        alert.addButton(withTitle: "Turn Off")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
+        if matches(field.stringValue) { return true }
+        let wrong = NSAlert()
+        wrong.messageText = "That password is not right."
+        wrong.informativeText = "The watermark has been left on."
+        wrong.runModal()
+        return false
+    }
+}
+
 /// The app's file panels, built once at launch and reused.
 ///
 /// -[NSSavePanel init] is not a cheap constructor. It opens a connection to an out-of-process
@@ -120,11 +164,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
 }
 
+/// The watermark switch, in the menu bar. Turning it on is free; turning it off asks first.
+struct WatermarkCommands: Commands {
+    @AppStorage(Watermark.key) private var on = true
+
+    var body: some Commands {
+        CommandGroup(after: .toolbar) {
+            Toggle("Watermark", isOn: Binding(
+                get: { on },
+                set: { wanted in
+                    guard !wanted else { on = true; return }
+                    // Deferred off the menu action: the switch only moves once the sheet comes
+                    // back, and running a modal while the menu is still unwinding is the shape of
+                    // trouble this app has already had once, with the file panels.
+                    DispatchQueue.main.async {
+                        if Watermark.confirmTurnOff() { on = false }
+                    }
+                }))
+            .help("Stamp the miro badge on previews and exports. A password is needed to turn it off.")
+        }
+    }
+}
+
 @main
 struct OCRSearchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
         WindowGroup("Miro-ocr-search") { ContentView().frame(minWidth: 760, minHeight: 520) }
+            .commands { WatermarkCommands() }
         // Full-size viewer: one window per image, closable with the red button, Cmd+W or Esc.
         WindowGroup("Preview", id: "preview", for: PreviewRequest.self) { $req in
             if let req { PreviewView(allPaths: req.allPaths, startIndex: req.startIndex, query: req.query, searchMode: req.mode) }
@@ -477,6 +544,8 @@ struct PreviewView: View {
     @State private var pixelSize: CGSize = .zero
     /// Pixels per point for this image; see imagePointScale. Sizes shown and typed are points.
     @State private var imageScale: CGFloat = 1
+    /// App-wide watermark switch; see Watermark. Held here so the preview redraws when it changes.
+    @AppStorage(Watermark.key) private var watermarkOn = true
     /// Fitted font size per match, computed once at the image's native pixel scale rather than
     /// on demand — fitting takes several font-metric lookups, and computing it live inside
     /// MatchView/MatchInfoPopup's body meant it re-ran on every mouse-move while hovering *any*

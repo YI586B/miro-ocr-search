@@ -242,9 +242,9 @@ func renderExportPNG(path: String, query: String, searchMode: SearchMode,
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
     drawOverlay(in: ctx, canvas: CGSize(width: w, height: h), plan: plan, style: style)
-    // Only when the overlay is on: with it off the export is the image as it is, and a watermark
-    // would be the one thing contradicting that.
-    if style.show { drawWatermark(ctx: ctx, width: CGFloat(w), height: CGFloat(h)) }
+    // Only when the overlay is on — with it off the export is the image as it is, and a watermark
+    // would be the one thing contradicting that — and only while the switch is on.
+    if style.show, Watermark.isOn { drawWatermark(ctx: ctx, width: CGFloat(w), height: CGFloat(h)) }
     NSGraphicsContext.restoreGraphicsState()
     guard let out = ctx.makeImage() else { return nil }
     return NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:])
