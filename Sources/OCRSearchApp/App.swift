@@ -661,7 +661,11 @@ struct PreviewView: View {
                                         // see watermarkPixelSize.
                                         let ww = watermarkPixelSize.width * scale
                                         let wh = watermarkPixelSize.height * scale
-                                        if style.show {
+                                        // Both have to agree: the menu switch decides whether the
+                                        // badge exists at all, and the overlay toggle decides
+                                        // whether you are looking at a marked-up image or the
+                                        // plain one. Off in the menu means off regardless.
+                                        if watermarkOn, style.show {
                                         ZStack {
                                             RoundedRectangle(cornerRadius: wh * watermarkCornerFraction)
                                                 .fill(watermarkBackground)
