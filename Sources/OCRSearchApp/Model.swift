@@ -31,7 +31,26 @@ final class Model: ObservableObject {
     private var docs: [Doc] = []
     /// Progress while reading a folder — (done, total) — for the status line.
     @Published var reading: (done: Int, total: Int)?
-    private var readTask: Task<Void, Never>?
+    /// Bumped by each open(folder:). A read in flight checks it and gives up once it is no longer
+    /// the current one, which is how a folder change cancels the previous read.
+    private var readGeneration = 0
+
+    /// Where the OCR runs.
+    ///
+    /// Deliberately a Dispatch queue rather than Swift Concurrency. recognizeText blocks the
+    /// thread it is on for as long as Vision takes, and Vision funnels requests through a capacity
+    /// queue of its own with a *synchronous* dispatch. Running several of those on the cooperative
+    /// pool — which has about one thread per core — parked every thread it had inside that
+    /// synchronous wait, leaving nothing able to make progress: sampled while stuck, nine threads
+    /// sat in dispatchSyncByPreservingQueueCapacity waiting for queue ownership that was never
+    /// going to arrive.
+    ///
+    /// Serial, because concurrency barely helps and this is where the trouble came from. Running
+    /// three of these at once on a Dispatch queue — which, unlike the cooperative pool, can grow
+    /// threads to cover blocking work — read this folder in 9.9s against 11.1s serial. An 11%
+    /// gain is not worth contending again on the queue that deadlocked, since Vision serialises
+    /// the requests internally regardless.
+    private static let readQueue = DispatchQueue(label: "com.sir.ocr-search.read", qos: .userInitiated)
     @Published var query = ""
     @Published var searchMode: SearchMode = SearchMode(rawValue: UserDefaults.standard.string(forKey: "searchMode") ?? "") ?? .phrase {
         didSet { UserDefaults.standard.set(searchMode.rawValue, forKey: "searchMode") }
@@ -91,7 +110,8 @@ final class Model: ObservableObject {
     /// OCR inside the search, which would make every keystroke cost seconds. Reading is the slow
     /// part and it happens once, visibly, with a count; searching afterwards is instant.
     func open(folder url: URL) {
-        readTask?.cancel()
+        reading = nil
+        readGeneration += 1
         folder = url
         docs = []; results = []; selection = []
         let images = (FileManager.default.enumerator(
@@ -100,43 +120,39 @@ final class Model: ObservableObject {
             .filter { imageExts.contains($0.pathExtension.lowercased()) } ?? []).sorted { $0.path < $1.path }
 
         guard !images.isEmpty else {
-            status = "No images in \(url.lastPathComponent)"; reading = nil; return
+            status = "No images in \(url.lastPathComponent)"; reading = nil; busy = false; return
         }
         busy = true; reading = (0, images.count)
         status = "Reading \(plural(images.count, "image")) in \(url.lastPathComponent)…"
 
-        readTask = Task { [weak self] in
+        let generation = readGeneration
+        Self.readQueue.async { [weak self] in
             var out: [Doc] = []
-            // Bounded concurrency: Vision is happy to use every core, but spawning one task per
-            // file on a large folder just thrashes.
-            let lanes = max(2, min(ProcessInfo.processInfo.activeProcessorCount, 8))
-            var next = 0
-            await withTaskGroup(of: Doc?.self) { group in
-                func submit() {
-                    guard next < images.count else { return }
-                    let u = images[next]; next += 1
-                    group.addTask(priority: .userInitiated) {
-                        guard let text = try? recognizeText(at: u) else { return nil }
-                        return Doc(path: u.path, text: text)
-                    }
-                }
-                for _ in 0..<lanes { submit() }
-                while let doc = await group.next() {
-                    if Task.isCancelled { group.cancelAll(); return }
-                    if let doc { out.append(doc) }
-                    await MainActor.run { self?.reading = (out.count, images.count) }
-                    submit()
+            var done = 0
+            for u in images {
+                // A newer open(folder:) supersedes this one; stop rather than finish work whose
+                // results would be thrown away.
+                var stale = false
+                DispatchQueue.main.sync { stale = self?.readGeneration != generation }
+                if stale { return }
+
+                if let text = try? recognizeText(at: u) { out.append(Doc(path: u.path, text: text)) }
+                done += 1
+                let progress = done
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.readGeneration == generation else { return }
+                    self.reading = (progress, images.count)
                 }
             }
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self else { return }
-                self.docs = out.sorted { $0.path < $1.path }
+            let docs = out
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.readGeneration == generation else { return }
+                self.docs = docs
                 self.reading = nil; self.busy = false
-                let failed = images.count - out.count
+                let failed = images.count - docs.count
                 self.status = failed == 0
-                    ? "Read \(plural(out.count, "image")) in \(url.lastPathComponent)"
-                    : "Read \(plural(out.count, "image")) in \(url.lastPathComponent), \(failed) unreadable"
+                    ? "Read \(plural(docs.count, "image")) in \(url.lastPathComponent)"
+                    : "Read \(plural(docs.count, "image")) in \(url.lastPathComponent), \(failed) unreadable"
                 self.search()
             }
         }
