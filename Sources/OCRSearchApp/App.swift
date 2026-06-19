@@ -1375,6 +1375,19 @@ struct ContentView: View {
             } else {
                 List(m.results, selection: $m.selection) { hit in
                     HStack(spacing: 10) {
+                        // An explicit checkbox for what gets exported. The list's own selection
+                        // still drives it, but selection and "included in the export" are not the
+                        // same idea to look at — a highlighted row says which one you are reading,
+                        // a ticked box says which ones are going out — and the export buttons
+                        // count the latter.
+                        Toggle("", isOn: Binding(
+                            get: { m.selection.contains(hit.id) },
+                            set: { on in
+                                if on { m.selection.insert(hit.id) } else { m.selection.remove(hit.id) }
+                            }))
+                            .labelsHidden()
+                            .help("Include this image in exports")
+                            .accessibilityLabel("Include \((hit.path as NSString).lastPathComponent) in exports")
                         Thumb(path: hit.path)
                         VStack(alignment: .leading, spacing: 3) {
                             Text((hit.path as NSString).lastPathComponent).fontWeight(.medium)
@@ -1384,8 +1397,8 @@ struct ContentView: View {
                                 .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
                         }
                         Spacer()
-                        Button { openPreview(hit) } label: { Image(systemName: "eye") }
-                            .buttonStyle(.borderless).help("View full size").accessibilityLabel("View full size")
+                        Button("View") { openPreview(hit) }
+                            .help("Open this image full size")
                     }
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { openPreview(hit) }
@@ -1406,7 +1419,12 @@ struct ContentView: View {
                     Button { NSWorkspace.shared.open(l) } label: { MiroBadge(size: 14); Text("Open board") }
                 }
                 Spacer()
-                Button("Select all") { m.selection = Set(m.results.map(\.id)) }.disabled(m.results.isEmpty)
+                // One control rather than two: once everything is ticked the only thing left to
+                // want is to untick it.
+                Button(m.selection.count == m.results.count && !m.results.isEmpty ? "Select none" : "Select all") {
+                    m.selection = m.selection.count == m.results.count ? [] : Set(m.results.map(\.id))
+                }
+                .disabled(m.results.isEmpty)
                 Menu("Export to file") {
                     Button("CSV (path + OCR text)…") { m.exportToFile(.csv) }
                     Button("Markdown…") { m.exportToFile(.markdown) }
