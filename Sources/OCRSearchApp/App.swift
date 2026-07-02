@@ -46,6 +46,31 @@ let watermarkArtwork: NSImage? = {
 /// fractional before, which happened to give exactly 63x34 on the 1356px-wide reference and
 /// something smaller on every other image.) The trade-off is that on a much larger image the
 /// badge is proportionally smaller — deliberate, but the numbers to change are right here.
+/// The wordmark in white.
+///
+/// The artwork's own fill is the near-black it uses on a light page, which all but disappears
+/// against a grey badge. Recoloured once here rather than at each draw, and rasterised generously
+/// so the badge — 43px of wordmark at export size — is always scaling one down rather than
+/// stretching one up.
+let watermarkWordmark: NSImage? = {
+    guard let art = watermarkArtwork, art.size.width > 0 else { return nil }
+    let w = 512, h = max(Int((512 / art.size.width * art.size.height).rounded()), 1)
+    guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+    let rect = CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h))
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+    art.draw(in: rect)
+    NSGraphicsContext.restoreGraphicsState()
+    // Keeps the letters' coverage, replaces their colour — antialiased edges included.
+    ctx.setBlendMode(.sourceIn)
+    ctx.setFillColor(NSColor.white.cgColor)
+    ctx.fill(rect)
+    guard let img = ctx.makeImage() else { return nil }
+    return NSImage(cgImage: img, size: NSSize(width: w, height: h))
+}()
+
 let watermarkPixelSize = CGSize(width: 63, height: 34)
 let watermarkRightMargin: CGFloat = 20
 let watermarkBottomMargin: CGFloat = 20
@@ -669,8 +694,8 @@ struct PreviewView: View {
                                         ZStack {
                                             RoundedRectangle(cornerRadius: wh * watermarkCornerFraction)
                                                 .fill(watermarkBackground)
-                                            if let watermarkArtwork {
-                                                Image(nsImage: watermarkArtwork).resizable().scaledToFit()
+                                            if let watermarkWordmark {
+                                                Image(nsImage: watermarkWordmark).resizable().scaledToFit()
                                                     .frame(width: ww * watermarkWordmarkWidthFraction)
                                             }
                                         }

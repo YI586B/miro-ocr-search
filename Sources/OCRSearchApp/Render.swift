@@ -475,7 +475,7 @@ private func drawWatermark(ctx: CGContext, width: CGFloat, height: CGFloat) {
 
     // Centred on both axes: the SVG's box wraps the wordmark exactly, so centring the box centres
     // the letters.
-    guard let art = watermarkArtwork, art.size.width > 0 else { return }
+    guard let art = watermarkWordmark, art.size.width > 0 else { return }
     let mw = ww * watermarkWordmarkWidthFraction
     let mh = mw * (art.size.height / art.size.width)
     art.draw(in: CGRect(x: rect.midX - mw / 2, y: rect.midY - mh / 2, width: mw, height: mh),
