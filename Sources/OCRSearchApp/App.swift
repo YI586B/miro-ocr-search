@@ -643,14 +643,19 @@ struct PreviewView: View {
                                         // Invisible, and only for hit testing: the overlay itself is one
                                         // image now, so each match still needs its own target for the hover
                                         // card to know which one the cursor is over.
+                                        //
+                                        // The target is the glyphs themselves — the ink measured off the
+                                        // image — not Vision's box and not the padded patch drawn over it.
+                                        // Those are both bigger than the words, so the card used to appear
+                                        // while the cursor was still in the margin, and on a line of
+                                        // several matches the inflated areas reached into each other.
                                         ForEach(Array((style.show ? matches : []).enumerated()), id: \.offset) { i, m in
-                                            let padH = m.rect.height * geo.size.height * matchBoxPaddingFraction
-                                            let w = m.rect.width * geo.size.width + padH
-                                            let h = m.rect.height * geo.size.height + padH
+                                            let target = hoverTarget(i)
                                             Color.clear.contentShape(Rectangle())
-                                                .frame(width: w, height: h)
-                                                .position(x: m.rect.midX * geo.size.width,
-                                                          y: (1 - m.rect.midY) * geo.size.height)
+                                                .frame(width: target.width * geo.size.width,
+                                                       height: target.height * geo.size.height)
+                                                .position(x: target.midX * geo.size.width,
+                                                          y: (1 - target.midY) * geo.size.height)
                                                 .onContinuousHover(coordinateSpace: .named("preview")) { phase in
                                                     switch phase {
                                                     case .active(let p): hoverIndex = i; hoverPoint = p
@@ -660,13 +665,12 @@ struct PreviewView: View {
                                         }
                                         if let i = hoverIndex, matches.indices.contains(i) {
                                             let m = matches[i]
-                                            let padH = m.rect.height * geo.size.height * matchBoxPaddingFraction
-                                            let w = m.rect.width * geo.size.width + padH
-                                            let h = m.rect.height * geo.size.height + padH
+                                            let target = hoverTarget(i)
                                             let mf = matchedFonts.indices.contains(i) ? matchedFonts[i] : nil
                                             MatchInfoPopup(text: m.text, mode: style.mode,
-                                                           count: matches.filter { $0.text.caseInsensitiveCompare(m.text) == .orderedSame }.count,
-                                                           boxSize: CGSize(width: w, height: h),
+                                                           index: i + 1, total: matches.count,
+                                                           boxSize: CGSize(width: target.width * pixelSize.width,
+                                                                           height: target.height * pixelSize.height),
                                                            fontSize: imageFontSize(i),
                                                            design: style.design, weight: style.weight,
                                                            boxColor: box,
@@ -1157,6 +1161,13 @@ struct PreviewView: View {
                         }
                     }
         }
+    }
+
+    /// The area a match responds to hover in: the glyphs as measured off the image, falling back
+    /// to Vision's box for a match whose ink could not be isolated. Normalised, bottom-left
+    /// origin, like everything else that describes where a match is.
+    private func hoverTarget(_ i: Int) -> CGRect {
+        (inkSamples[safe: i] ?? nil)?.rect ?? (matches.indices.contains(i) ? matches[i].rect : .zero)
     }
 
     /// A quiet line under the image saying what it is and where it came from.

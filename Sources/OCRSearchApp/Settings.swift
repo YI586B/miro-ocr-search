@@ -167,7 +167,12 @@ struct MatchView: View {
 struct MatchInfoPopup: View {
     let text: String
     let mode: String
-    let count: Int
+    /// Which match this is, of how many on the image. The card describes this one instance — its
+    /// own size, colours and font — so it says which instance rather than counting how many times
+    /// the same word turns up.
+    let index: Int
+    let total: Int
+    /// The size of this match's own glyphs, in the image's pixels.
     let boxSize: CGSize
     let fontSize: CGFloat
     let design: String, weight: String
@@ -180,7 +185,7 @@ struct MatchInfoPopup: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(text).font(.headline).lineLimit(2)
-            Text("\(count) occurrence\(count == 1 ? "" : "s") on this image")
+            Text(total > 1 ? "Match \(index) of \(total) on this image" : "The only match on this image")
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
             if mode == "text" {
@@ -192,7 +197,7 @@ struct MatchInfoPopup: View {
                 colorRow("Text color", textColor)
                 colorRow("Background", bgColor)
             } else {
-                row("Box size", "\(Int(boxSize.width.rounded()))×\(Int(boxSize.height.rounded())) pt")
+                row("Box size", "\(Int(boxSize.width.rounded()))×\(Int(boxSize.height.rounded())) px")
                 colorRow("Box color", boxColor)
                 row("Fill strength", "\(Int(opacity * 100))%")
             }
