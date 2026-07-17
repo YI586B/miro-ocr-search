@@ -46,12 +46,12 @@ let watermarkArtwork: NSImage? = {
 /// fractional before, which happened to give exactly 63x34 on the 1356px-wide reference and
 /// something smaller on every other image.) The trade-off is that on a much larger image the
 /// badge is proportionally smaller — deliberate, but the numbers to change are right here.
-/// The wordmark in white.
+/// The wordmark, recoloured to watermarkInk.
 ///
-/// The artwork's own fill is the near-black it uses on a light page, which all but disappears
-/// against a grey badge. Recoloured once here rather than at each draw, and rasterised generously
-/// so the badge — 43px of wordmark at export size — is always scaling one down rather than
-/// stretching one up.
+/// The artwork carries the near-black it uses on a light page, which is not what is wanted on a
+/// grey chip. Recoloured once here rather than at each draw, and rasterised generously so the
+/// badge — 43px of wordmark at export size — is always scaling one down rather than stretching
+/// one up.
 let watermarkWordmark: NSImage? = {
     guard let art = watermarkArtwork, art.size.width > 0 else { return nil }
     let w = 512, h = max(Int((512 / art.size.width * art.size.height).rounded()), 1)
@@ -65,7 +65,7 @@ let watermarkWordmark: NSImage? = {
     NSGraphicsContext.restoreGraphicsState()
     // Keeps the letters' coverage, replaces their colour — antialiased edges included.
     ctx.setBlendMode(.sourceIn)
-    ctx.setFillColor(NSColor.white.cgColor)
+    ctx.setFillColor(watermarkInk.cgColor)
     ctx.fill(rect)
     guard let img = ctx.makeImage() else { return nil }
     return NSImage(cgImage: img, size: NSSize(width: w, height: h))
@@ -74,15 +74,16 @@ let watermarkWordmark: NSImage? = {
 let watermarkPixelSize = CGSize(width: 63, height: 34)
 let watermarkRightMargin: CGFloat = 20
 let watermarkBottomMargin: CGFloat = 20
-/// Corner rounding as a fraction of the badge's height, and the share of the badge's width the
-/// wordmark spans — both taken from the reference badge, which leaves about 16% padding either
-/// side of the wordmark. The wordmark is then centred on both axes, unlike the reference, where
-/// it sat noticeably high (24% clearance above, 31% below).
-let watermarkCornerFraction: CGFloat = 0.2
+/// The share of the badge's width the wordmark spans, taken from the reference badge, which
+/// leaves about 16% padding either side. The wordmark is centred on both axes, unlike the
+/// reference, where it sat noticeably high (24% clearance above, 31% below).
 let watermarkWordmarkWidthFraction: CGFloat = 0.68
 /// 50% grey. The badge lands on screenshots of any colour, so it is translucent rather than a
 /// solid chip.
 let watermarkBackground = Color(white: 0.5, opacity: 0.5)
+/// The wordmark's colour: grey, and darker than the chip it sits on so the letters read against
+/// it. One constant, so changing the badge's look is one edit rather than a hunt.
+let watermarkInk = NSColor(white: 0.4, alpha: 1)
 /// Applied to the badge as a whole, on top of the translucency already in watermarkBackground.
 /// The badge carries its own 50% now, so this stays at 1 — it is the single knob for fading the
 /// whole thing, wordmark included, without touching the background colour.
@@ -696,8 +697,7 @@ struct PreviewView: View {
                                         // plain one. Off in the menu means off regardless.
                                         if watermarkOn, style.show {
                                         ZStack {
-                                            RoundedRectangle(cornerRadius: wh * watermarkCornerFraction)
-                                                .fill(watermarkBackground)
+                                            Rectangle().fill(watermarkBackground)
                                             if let watermarkWordmark {
                                                 Image(nsImage: watermarkWordmark).resizable().scaledToFit()
                                                     .frame(width: ww * watermarkWordmarkWidthFraction)

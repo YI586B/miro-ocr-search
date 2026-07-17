@@ -455,8 +455,8 @@ private func blurredText(line: CTLine, origin: CGPoint, shear: CGFloat,
 /// The same bottom-right badge the preview stamps on every image, at the same pixel size and
 /// offsets — see watermarkPixelSize — so the export matches what was on screen.
 ///
-/// Built here rather than blitted from a file: the background is a translucent rounded rectangle
-/// and the wordmark is vector art rasterised straight into this context at its final size, which
+/// Built here rather than blitted from a file: the background is a translucent rectangle and the
+/// wordmark is vector art rasterised straight into this context at its final size, which
 /// is what keeps the badge's edges and letterforms clean on a full-resolution image instead of
 /// upscaling a small bitmap.
 private func drawWatermark(ctx: CGContext, width: CGFloat, height: CGFloat) {
@@ -467,10 +467,8 @@ private func drawWatermark(ctx: CGContext, width: CGFloat, height: CGFloat) {
 
     ctx.saveGState()
     ctx.setAlpha(watermarkOpacity)
-    let r = wh * watermarkCornerFraction
-    ctx.addPath(CGPath(roundedRect: rect, cornerWidth: r, cornerHeight: r, transform: nil))
     ctx.setFillColor(cgColor(watermarkBackground))
-    ctx.fillPath()
+    ctx.fill(rect)
     ctx.restoreGState()
 
     // Centred on both axes: the SVG's box wraps the wordmark exactly, so centring the box centres
