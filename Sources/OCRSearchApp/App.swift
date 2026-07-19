@@ -565,13 +565,19 @@ struct PreviewView: View {
     @State private var matchedFonts: [String?] = []
     /// The family bestMatchingFont(forImage:) actually detected, kept separately from
     /// matchedFonts (which holds the *effective* family, i.e. `style.manualFont` when it's set) purely
-    /// so the toolbar can style.show the user what auto-detection found, even while overridden.
+    /// so the toolbar can show the user what auto-detection found, even while overridden.
     @State private var detectedFontName: String?
     @State private var pixelSize: CGSize = .zero
     /// Pixels per point for this image; see imagePointScale. Sizes shown and typed are points.
     @State private var imageScale: CGFloat = 1
     /// App-wide watermark switch; see Watermark. Held here so the preview redraws when it changes.
     @AppStorage(Watermark.key) private var watermarkOn = true
+    /// Whether the overlay is drawn, and as boxes or as text. App-wide rather than per image:
+    /// these are how you are looking at whatever is open, not facts about one screenshot, and
+    /// having them follow each image meant paging through results kept changing the view out from
+    /// under you. The rest of the style stays per image — see OverlayStyle.
+    @AppStorage(HL.show) private var overlayOn = true
+    @AppStorage(HL.mode) private var overlayMode = "box"
     /// Fitted font size per match, computed once at the image's native pixel scale rather than
     /// on demand — fitting takes several font-metric lookups, and computing it live inside
     /// MatchView/MatchInfoPopup's body meant it re-ran on every mouse-move while hovering *any*
@@ -594,7 +600,7 @@ struct PreviewView: View {
     @State private var showStylePopover = false
     /// Mirrors the GeometryReader's `scale` (display points per native image pixel) outside of
     /// it, so the toolbar's Size field — which lives in .toolbar, with no access to that
-    /// GeometryReader — can style.show and set a size in the same on-screen points the user actually
+    /// GeometryReader — can show and set a size in the same on-screen points the user actually
     /// sees, matching how every other text-size field works, rather than some internal unit.
     @State private var displayScale: CGFloat = 1
     /// On-screen points per image pixel, or nil to fit the window. Explicit rather than a
@@ -636,7 +642,7 @@ struct PreviewView: View {
                                     // this is the cheap per-frame conversion to on-screen points.
                                     let scale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1
                                     ZStack(alignment: .topLeading) {
-                                        if style.show, let overlayLayer {
+                                        if overlayOn, let overlayLayer {
                                             Image(nsImage: overlayLayer).resizable()
                                                 .frame(width: geo.size.width, height: geo.size.height)
                                                 .allowsHitTesting(false)
@@ -650,7 +656,7 @@ struct PreviewView: View {
                                         // Those are both bigger than the words, so the card used to appear
                                         // while the cursor was still in the margin, and on a line of
                                         // several matches the inflated areas reached into each other.
-                                        ForEach(Array((style.show ? matches : []).enumerated()), id: \.offset) { i, m in
+                                        ForEach(Array((overlayOn ? matches : []).enumerated()), id: \.offset) { i, m in
                                             let target = hoverTarget(i)
                                             Color.clear.contentShape(Rectangle())
                                                 .frame(width: target.width * geo.size.width,
@@ -668,7 +674,7 @@ struct PreviewView: View {
                                             let m = matches[i]
                                             let target = hoverTarget(i)
                                             let mf = matchedFonts.indices.contains(i) ? matchedFonts[i] : nil
-                                            MatchInfoPopup(text: m.text, mode: style.mode,
+                                            MatchInfoPopup(text: m.text, mode: overlayMode,
                                                            index: i + 1, total: matches.count,
                                                            boxSize: CGSize(width: target.width * pixelSize.width,
                                                                            height: target.height * pixelSize.height),
@@ -695,7 +701,7 @@ struct PreviewView: View {
                                         // badge exists at all, and the overlay toggle decides
                                         // whether you are looking at a marked-up image or the
                                         // plain one. Off in the menu means off regardless.
-                                        if watermarkOn, style.show {
+                                        if watermarkOn, overlayOn {
                                         ZStack {
                                             Rectangle().fill(watermarkBackground)
                                             if let watermarkWordmark {
@@ -769,14 +775,14 @@ struct PreviewView: View {
                 .disabled(displayScale >= Self.zoomRange.upperBound)
             Divider()
 
-            Text(scanning ? "Finding matches…" : (searchTerms(query, mode: searchMode).isEmpty ? "" : (style.show ? plural(matches.count, "match") : "overlay off")))
+            Text(scanning ? "Finding matches…" : (searchTerms(query, mode: searchMode).isEmpty ? "" : (overlayOn ? plural(matches.count, "match") : "overlay off")))
                 .foregroundStyle(.secondary)
-            Toggle("Overlay", isOn: $style.show)
+            Toggle("Overlay", isOn: $overlayOn)
                 .toggleStyle(.switch).help("Show or hide the overlay (Cmd+Shift+O)")
                 .keyboardShortcut("o", modifiers: [.command, .shift])
-            Picker("Show as", selection: $style.mode) {
+            Picker("Show as", selection: $overlayMode) {
                 Text("Boxes").tag("box"); Text("Text").tag("text")
-            }.pickerStyle(.segmented).disabled(!style.show)
+            }.pickerStyle(.segmented).disabled(!overlayOn)
             // All the fine-grained style controls live behind one button instead of each being
             // its own toolbar item — with Font/Background/Auto/Auto font all inline, this bar
             // overflowed past a handful of items and the rest silently landed in the hidden
@@ -794,7 +800,7 @@ struct PreviewView: View {
                     // it had grown to two color pickers, three auto-match toggles and a whole
                     // font row with no hierarchy to read it by.
                     VStack(alignment: .leading, spacing: 14) {
-                        if style.mode == "text" {
+                        if overlayMode == "text" {
                             VStack(alignment: .leading, spacing: 8) {
                                 sectionHeader("Color")
                                 HStack {
@@ -869,7 +875,7 @@ struct PreviewView: View {
             // Detected whenever text is being drawn, not only while matching is on: the font
             // menu shows "Auto (X)" as the alternative to whatever is picked, and that label is
             // only honest if X has actually been worked out.
-            if style.mode == "text" { await detectFonts() }
+            if overlayMode == "text" { await detectFonts() }
             await recomputeFontSizes()
             recomputeRenderedFontNames()
             rebuildOverlay()
@@ -893,6 +899,15 @@ struct PreviewView: View {
         }
         .onChange(of: style.design) { _ in Task { await recomputeFontSizes(); rebuildOverlay() } }
         .onChange(of: style.weight) { _ in Task { await recomputeFontSizes(); recomputeRenderedFontNames(); rebuildOverlay() } }
+        .onChange(of: overlayOn) { _ in rebuildOverlay() }
+        .onChange(of: overlayMode) { _ in
+            Task {
+                if overlayMode == "text", detectedFontName == nil { await detectFonts() }
+                await recomputeFontSizes()
+                recomputeRenderedFontNames()
+                rebuildOverlay()
+            }
+        }
         .onChange(of: style.kerning) { _ in recomputeTrackings(); rebuildOverlay() }
         .onChange(of: style.manualSize) { _ in recomputeTrackings(); rebuildOverlay() }
         .onChange(of: style.manualFont) { _ in
@@ -946,15 +961,21 @@ struct PreviewView: View {
     private func zoomIn()   { zoom = min((zoom ?? displayScale) * Self.zoomStep, Self.zoomRange.upperBound) }
     private func zoomOut()  { zoom = max((zoom ?? displayScale) / Self.zoomStep, Self.zoomRange.lowerBound) }
 
-    /// Nothing about the drawing depends on the window any more — sizes, padding and outlines are
-    /// all in the image's own pixels — so this is simply the image's style.
-    private var drawingStyle: OverlayStyle { style }
+    /// The image's own style, with the two app-wide choices — whether the overlay is on, and
+    /// boxes or text — put back on it, since the renderer takes one value describing the whole
+    /// drawing rather than reaching for defaults itself.
+    private var drawingStyle: OverlayStyle {
+        var s = style
+        s.show = overlayOn
+        s.mode = overlayMode
+        return s
+    }
 
     /// Everything the shared overlay drawing needs, from what this window has already computed —
     /// no second OCR pass, and guaranteed to be the same inputs the on-screen layer was built
     /// from, so a Save writes exactly what is being looked at.
     private func currentPlan() -> RenderPlan {
-        RenderPlan(pixelSize: pixelSize, imageScale: imageScale, matches: style.show ? matches : [],
+        RenderPlan(pixelSize: pixelSize, imageScale: imageScale, matches: overlayOn ? matches : [],
                    bgColors: bgColors, ink: inkSamples, matchedFonts: matchedFonts,
                    fontSizes: fontSizes, trackings: trackings, smoothness: smoothness)
     }
@@ -1218,7 +1239,7 @@ struct PreviewView: View {
         let size = CGSize(width: 190, height: 30)
         return ZStack {
             RoundedRectangle(cornerRadius: 6).fill(.gray.opacity(0.25))
-            MatchView(text: sample, size: size, mode: style.mode,
+            MatchView(text: sample, size: size, mode: overlayMode,
                       box: box, textColor: textColor, opacity: style.opacity, outline: style.outline,
                       design: style.design, weight: style.weight,
                       sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: background,

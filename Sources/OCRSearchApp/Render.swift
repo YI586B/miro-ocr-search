@@ -52,7 +52,13 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     /// The look for `path`: what was last set for that image, or the defaults if it has none.
     static func forImage(_ path: String, _ d: UserDefaults = .standard) -> OverlayStyle {
         guard let raw = d.dictionary(forKey: store)?[path] as? Data,
-              let s = try? JSONDecoder().decode(OverlayStyle.self, from: raw) else { return current(d) }
+              var s = try? JSONDecoder().decode(OverlayStyle.self, from: raw) else { return current(d) }
+        // Whether the overlay is on, and boxes or text, are app-wide: they describe how you are
+        // looking at whatever is open rather than this image, so a saved copy of them is ignored
+        // in favour of the current setting.
+        let live = current(d)
+        s.show = live.show
+        s.mode = live.mode
         return s
     }
 
