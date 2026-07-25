@@ -1,5 +1,7 @@
 # miro-ocr-library
 
+User-facing docs: README.md (short) and GUIDE.md (comprehensive) — keep GUIDE.md current when behaviour changes.
+
 macOS Swift package: OCR images with Apple Vision, search their text, export to Miro / files.
 The app searches a folder you open directly — it reads every image in it once, keeps the text in memory, and has no index or database.
 The `ocrsearch` CLI is separate and still uses the SQLite FTS5 index.

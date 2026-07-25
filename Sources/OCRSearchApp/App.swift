@@ -1486,7 +1486,7 @@ struct ContentView: View {
                     Button("CSV (path + OCR text)…") { m.exportToFile(.csv) }
                     Button("Markdown…") { m.exportToFile(.markdown) }
                     Divider()
-                    Button("Images with overlay…") { m.exportToFile(.images) }
+                    Button("Images to directory…") { m.exportToFile(.images) }
                 }.disabled(m.selection.isEmpty || m.busy).fixedSize()
                 Button { showMiro = true } label: { MiroBadge(size: 14); Text("Export \(m.selection.count) to Miro…") }
                     .disabled(m.selection.isEmpty || m.busy).keyboardShortcut(.defaultAction)
