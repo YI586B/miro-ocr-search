@@ -11,7 +11,7 @@ The `ocrsearch` CLI is separate and still uses the SQLite FTS5 index.
 - Sources/ocrsearch: CLI (index / search / export)
 - Sources/OCRSearchApp: SwiftUI app (search window, full-size preview window with match overlay, Settings)
 - Sources/OCRSearchApp/Render.swift: composites image + overlays + watermark at native resolution for export (OverlayStyle, RenderPlan, renderExportPNG)
-- miro-files/: 16 iPhone battery-usage screenshots used as test data
+- miro-files/: local test screenshots, NOT tracked (personal; purged from history before the repo was published). Scripts and notes below refer to it as it exists on this machine.
 - run-app.command: build release + launch the app
 - make-icons.sh + Scripts/make-icon.swift: regenerate AppIcon.iconset / AppIcon.icns / icon-1024.png from watermark.svg (build-app.sh only copies the .icns)
 - Scripts/verify-watermark.swift <renderedDir> <sourceDir>: checks the watermark badge in exported images (63x34, 20px margins, centred)

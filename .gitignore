@@ -3,3 +3,6 @@
 *.xcodeproj
 .DS_Store
 /Miro-ocr-search.app/
+
+# Test screenshots: personal, and only needed locally.
+/miro-files/

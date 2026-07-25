@@ -20,8 +20,10 @@ image, per-image settings, the watermark, exporting, and the command line.
 | `Sources/OCRSearchCore` | Vision OCR, the Miro client, and the SQLite index the CLI uses |
 | `Sources/ocrsearch` | the command line tool, which keeps its own index |
 | `Sources/assets` | logo, icon, watermark, bundled Noto Sans |
-| `miro-files` | screenshots used as test material |
 | `Scripts` | icon generation, watermark verification |
+
+Test screenshots live in a local `miro-files/` folder, which is not tracked — point the app at any
+folder of images instead.
 
 ## Command line
 

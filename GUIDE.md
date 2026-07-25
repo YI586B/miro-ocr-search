@@ -178,7 +178,7 @@ only looks right on the display it was tuned for.
 
 `ocrsearch` is a separate tool and still keeps an index, unlike the app.
 
-    .build/release/ocrsearch index miro-files
+    .build/release/ocrsearch index ~/Pictures/Screenshots
     .build/release/ocrsearch search "Screen Active"
     .build/release/ocrsearch search "invoice AND 2026" --words
 
