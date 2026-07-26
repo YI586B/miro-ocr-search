@@ -6,14 +6,81 @@ Miro board.
 
 ---
 
-## Getting started
+## Requirements
 
-    ./build-app.sh        # compiles and assembles Miro-ocr-search.app
+| | |
+|---|---|
+| macOS | 13 Ventura or later |
+| Mac | Apple Silicon (M1 or newer) |
+| Disk | about 5 MB |
+
+Apple Silicon only. The app is built from source here with the Command Line Tools, which cannot
+produce a universal binary — that needs a full Xcode install — so there is no Intel slice. On an
+Intel Mac, build from source instead.
+
+Nothing else is needed. OCR runs on the device through Apple's Vision framework, so there is no
+account, no network and no API key, and nothing about your images leaves the machine. The one
+exception is exporting to Miro, which is an upload and needs a token.
+
+---
+
+## Installing a release
+
+Releases live on the **`release` branch**, not in the main line of the repository.
+
+1. Open the [`release` branch](https://github.com/YI586B/miro-ocr-search/tree/release) and
+   download `Miro-ocr-search-<version>.dmg`.
+2. Open the disk image and drag **Miro-ocr-search** into **Applications**.
+3. The first launch will be refused. See below.
+
+### The first launch is refused — this is expected
+
+macOS will say the app "cannot be opened because the developer cannot be verified", or on newer
+versions that it "is damaged and can't be opened". Neither is a fault in the download.
+
+The app is signed, but with an ad-hoc signature rather than a Developer ID, and it is not
+notarised. Both require a paid Apple Developer account. macOS quarantines anything downloaded from
+the internet and refuses to run it unless it carries a signature it can trace to a registered
+developer.
+
+To run it anyway, clear the quarantine flag:
+
+    xattr -dr com.apple.quarantine /Applications/Miro-ocr-search.app
+
+Then open it normally. You only need to do this once per download.
+
+Right-clicking the app and choosing **Open** also works on some macOS versions, and is worth
+trying first if you would rather not use the terminal.
+
+If that trade is not one you want to make — and it is a reasonable thing not to want — building
+from source avoids it entirely, because a locally built app is never quarantined.
+
+### Verifying a download
+
+Each release commit records the disk image's SHA-256. To check yours matches:
+
+    shasum -a 256 ~/Downloads/Miro-ocr-search-1.0.dmg
+
+---
+
+## Building from source
+
+    git clone git@github.com:YI586B/miro-ocr-search.git
+    cd miro-ocr-search
+    ./build-app.sh
     open "Miro-ocr-search.app"
 
-Or double-click `run-app.command`, which does both.
+Needs Swift 5.9 or later — `xcode-select --install` is enough, full Xcode is not required. The
+build takes under a minute from cold.
 
-Then: **Choose folder…** in the toolbar, wait while it reads the images, and type a search.
+`./make-release.sh` produces the disk image in `dist/`, reporting its size, architecture, minimum
+macOS version and checksum.
+
+---
+
+## Getting started
+
+Install a release (see below) or build from source, then: **Choose folder…** in the toolbar, wait while it reads the images, and type a search.
 
 ---
 

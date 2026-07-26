@@ -6,3 +6,6 @@
 
 # Test screenshots: personal, and only needed locally.
 /miro-files/
+
+# Built release artifacts; they live on the release branch, not here.
+/dist/
