@@ -7,7 +7,7 @@ struct MatchView: View {
     let showBoxes: Bool, showText: Bool
     let box: Color, textColor: Color
     let opacity: Double, outline: Bool
-    let design: String, weight: String
+    let design: TextDesign, weight: TextWeight
     var background: Color = .white
     var fontSize: CGFloat = 12
     /// Applied as a view modifier on top of the design's font, rather than resolving a true italic font file: SwiftUI synthesizes an oblique
@@ -18,7 +18,7 @@ struct MatchView: View {
     var body: some View {
         ZStack {
             if showText {
-                let w = HL.fontWeight(weight), d = HL.fontDesign(design)
+                let w = weight.font, d = design.font
                 // .leading, not the default .center: the substitute font's natural width rarely
                 // matches the original's exactly (that's the whole reason fitting exists), so
                 // centering left as much slack on the left as the right, drifting the text's
@@ -43,22 +43,22 @@ struct MatchView: View {
 }
 
 struct SettingsView: View {
-    @AppStorage(HL.show) private var show = true
-    @AppStorage(HL.showBoxes) private var showBoxes = true
-    @AppStorage(HL.showText) private var showText = true
-    @AppStorage(HL.boxHex) private var boxHex = HL.defaultBox
-    @AppStorage(HL.opacity) private var opacity = 0.35
-    @AppStorage(HL.outline) private var outline = true
-    @AppStorage(HL.textHex) private var textHex = HL.defaultText
-    @AppStorage(HL.autoTextColor) private var autoTextColor = true
-    @AppStorage(HL.bgHex) private var bgHex = HL.defaultBg
-    @AppStorage(HL.autoBg) private var autoBg = true
-    @AppStorage(HL.design) private var design = "default"
-    @AppStorage(HL.weight) private var weight = "regular"
-    @AppStorage(HL.autoFont) private var autoFont = false
-    @AppStorage(HL.manualFont) private var manualFont = ""
-    @AppStorage(HL.manualSize) private var manualSize: Double = 0
-    @AppStorage(HL.italic) private var italic = false
+    @AppStorage(HL.show) private var show = OverlayStyle.defaults.show
+    @AppStorage(HL.showBoxes) private var showBoxes = OverlayStyle.defaults.showBoxes
+    @AppStorage(HL.showText) private var showText = OverlayStyle.defaults.showText
+    @AppStorage(HL.boxHex) private var boxHex = OverlayStyle.defaults.boxHex
+    @AppStorage(HL.opacity) private var opacity = OverlayStyle.defaults.opacity
+    @AppStorage(HL.outline) private var outline = OverlayStyle.defaults.outline
+    @AppStorage(HL.textHex) private var textHex = OverlayStyle.defaults.textHex
+    @AppStorage(HL.autoTextColor) private var autoTextColor = OverlayStyle.defaults.autoTextColor
+    @AppStorage(HL.bgHex) private var bgHex = OverlayStyle.defaults.bgHex
+    @AppStorage(HL.autoBg) private var autoBg = OverlayStyle.defaults.autoBg
+    @AppStorage(HL.design) private var design = OverlayStyle.defaults.design
+    @AppStorage(HL.weight) private var weight = OverlayStyle.defaults.weight
+    @AppStorage(HL.autoFont) private var autoFont = OverlayStyle.defaults.autoFont
+    @AppStorage(HL.manualFont) private var manualFont = OverlayStyle.defaults.manualFont
+    @AppStorage(HL.manualSize) private var manualSize = OverlayStyle.defaults.manualSize
+    @AppStorage(HL.italic) private var italic = OverlayStyle.defaults.italic
 
     var body: some View {
         let box = Binding<Color>(get: { Color(hex: boxHex) ?? .yellow }, set: { boxHex = $0.hexString })
@@ -87,11 +87,10 @@ struct SettingsView: View {
                 Toggle("Match text's own color automatically", isOn: $autoTextColor)
                 Toggle("Match background color automatically", isOn: $autoBg)
                 Picker("Font", selection: $design) {
-                    Text("System").tag("default"); Text("Rounded").tag("rounded")
-                    Text("Serif").tag("serif"); Text("Monospaced").tag("monospaced")
+                    ForEach(TextDesign.allCases, id: \.self) { Text($0.label).tag($0) }
                 }.disabled(autoFont)
                 Picker("Weight", selection: $weight) {
-                    Text("Regular").tag("regular"); Text("Medium").tag("medium"); Text("Bold").tag("bold")
+                    ForEach(TextWeight.allCases, id: \.self) { Text($0.label).tag($0) }
                 }
                 Toggle("Italic", isOn: $italic)
                 Toggle("Auto-match an installed font", isOn: $autoFont)
@@ -122,20 +121,15 @@ struct SettingsView: View {
                               // which is a much bigger number; clamp so the sample stays legible
                               // rather than overflowing its own box.
                               fontSize: min(manualSize > 0 ? manualSize
-                                            : fittedFontSize(for: "Screen Active", weight: HL.fontWeight(weight),
-                                                             design: HL.fontDesign(design),
+                                            : fittedFontSize(for: "Screen Active", weight: weight.font,
+                                                             design: design.font,
                                                              fitting: CGSize(width: 150, height: 26)), 24),
                               italic: italic)
                         .offset(x: -50)
                 }.frame(height: 50)
             }
 
-            Button("Reset") {
-                show = true; showBoxes = true; showText = true; boxHex = HL.defaultBox; opacity = 0.35; outline = true
-                textHex = HL.defaultText; autoTextColor = true; bgHex = HL.defaultBg; autoBg = true
-                design = "default"; weight = "regular"; autoFont = false
-                manualFont = ""; manualSize = 0; italic = false
-            }
+            Button("Reset") { OverlayStyle.defaults.saveAsDefaults() }
         }
         .padding(20).frame(width: 460)
     }

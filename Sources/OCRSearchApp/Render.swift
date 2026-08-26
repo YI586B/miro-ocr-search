@@ -78,7 +78,7 @@ struct RenderPlan: Sendable {
         }
         let families = Array(repeating: family, count: matches.count)
         let sizes = matches.enumerated().map { i, m -> CGFloat in
-            let w = HL.fontWeight(style.weight), d = HL.fontDesign(style.design)
+            let w = style.weight.font, d = style.design.font
             // Fit to the ink measured off the image when there is any. Vision's box is the
             // fallback for a match whose glyphs could not be isolated — a blank box, or text on
             // a busy background — where an approximate size beats none.
@@ -95,8 +95,8 @@ struct RenderPlan: Sendable {
         let tracks = matches.enumerated().map { i, m -> CGFloat in
             guard let measured = ink[safe: i] ?? nil else { return 0 }
             let size = style.manualSize > 0 ? CGFloat(style.manualSize) * pointScale : sizes[i]
-            let font = matchFont(size: size, weight: HL.fontWeight(style.weight),
-                                 design: HL.fontDesign(style.design), matchedFamily: family)
+            let font = matchFont(size: size, weight: style.weight.font,
+                                 design: style.design.font, matchedFamily: family)
             return inkFittedTracking(for: m.text, font: font, kerning: style.kerning,
                                      inkWidth: measured.rect.width * px.width)
         }
@@ -274,8 +274,8 @@ func configureTextQuality(_ ctx: CGContext) {
 private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFloat, color: CGColor,
                            family: String?, tracking: CGFloat, blur: CGFloat,
                            style: OverlayStyle, ctx: CGContext) {
-    var font = matchFont(size: size, weight: HL.fontWeight(style.weight),
-                         design: HL.fontDesign(style.design), matchedFamily: family)
+    var font = matchFont(size: size, weight: style.weight.font,
+                         design: style.design.font, matchedFamily: family)
     var shear: CGFloat = 0
     if style.italic {
         let real = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)

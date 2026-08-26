@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The watermark switch, in the menu bar. Turning it on is free; turning it off asks first.
 struct WatermarkCommands: Commands {
-    @AppStorage(Watermark.key) private var on = true
+    @AppStorage(Watermark.key) private var on = Watermark.defaultOn
 
     var body: some Commands {
         CommandGroup(after: .toolbar) {
@@ -51,9 +51,9 @@ extension FocusedValues {
 /// buttons so the shortcuts keep working when a button is in the toolbar's overflow menu or the
 /// toolbar is hidden. The overlay switches are app-wide settings, so they work from any window.
 struct PreviewCommands: Commands {
-    @AppStorage(HL.show) private var overlayOn = true
-    @AppStorage(HL.showBoxes) private var showBoxes = true
-    @AppStorage(HL.showText) private var showText = true
+    @AppStorage(HL.show) private var overlayOn = OverlayStyle.defaults.show
+    @AppStorage(HL.showBoxes) private var showBoxes = OverlayStyle.defaults.showBoxes
+    @AppStorage(HL.showText) private var showText = OverlayStyle.defaults.showText
     @FocusedValue(\.preview) private var preview
 
     var body: some Commands {

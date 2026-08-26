@@ -24,13 +24,36 @@ enum HL {
     static let defaultText = "#000000"
     static let defaultBg = "#FFFFFF"
 
-    static func fontDesign(_ s: String) -> Font.Design {
-        switch s { case "rounded": return .rounded; case "serif": return .serif
-        case "monospaced": return .monospaced; default: return .default }
+}
+
+/// The system font's design, used when no family is matched or picked. The raw values are what
+/// UserDefaults and each image's saved style store, so they must not change.
+enum TextDesign: String, Codable, CaseIterable, Sendable {
+    case system = "default", rounded, serif, monospaced
+
+    var font: Font.Design {
+        switch self {
+        case .system: return .default
+        case .rounded: return .rounded
+        case .serif: return .serif
+        case .monospaced: return .monospaced
+        }
     }
-    static func fontWeight(_ s: String) -> Font.Weight {
-        switch s { case "medium": return .medium; case "bold": return .bold; default: return .regular }
+    var label: String { self == .system ? "System" : rawValue.capitalized }
+}
+
+/// The weight matches are redrawn in. Raw values are stored, as for TextDesign.
+enum TextWeight: String, Codable, CaseIterable, Sendable {
+    case regular, medium, bold
+
+    var font: Font.Weight {
+        switch self {
+        case .regular: return .regular
+        case .medium: return .medium
+        case .bold: return .bold
+        }
     }
+    var label: String { rawValue.capitalized }
 }
 
 // MARK: - style snapshot
@@ -40,6 +63,10 @@ enum HL {
 /// isn't available to the export path, whether that runs from the preview window's Save command
 /// or from a batch export with no preview window open at all.
 struct OverlayStyle: Sendable, Codable, Equatable {
+    /// The one place the defaults are defined. Settings, the menu bar, the preview window and
+    /// an untouched install all start from these values.
+    static let defaults = OverlayStyle()
+
     var show = true
     var showBoxes = true
     var showText = true
@@ -50,8 +77,8 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     var autoTextColor = true
     var bgHex = HL.defaultBg
     var autoBg = true
-    var design = "default"
-    var weight = "regular"
+    var design: TextDesign = .system
+    var weight: TextWeight = .regular
     var autoFont = false
     var manualFont = ""
     /// Letter spacing, in points, applied on top of what the font does by itself. nil fits it to
@@ -126,8 +153,8 @@ struct OverlayStyle: Sendable, Codable, Equatable {
         d.set(boxHex, forKey: HL.boxHex); d.set(opacity, forKey: HL.opacity)
         d.set(outline, forKey: HL.outline); d.set(textHex, forKey: HL.textHex)
         d.set(autoTextColor, forKey: HL.autoTextColor); d.set(bgHex, forKey: HL.bgHex)
-        d.set(autoBg, forKey: HL.autoBg); d.set(design, forKey: HL.design)
-        d.set(weight, forKey: HL.weight); d.set(autoFont, forKey: HL.autoFont)
+        d.set(autoBg, forKey: HL.autoBg); d.set(design.rawValue, forKey: HL.design)
+        d.set(weight.rawValue, forKey: HL.weight); d.set(autoFont, forKey: HL.autoFont)
         d.set(manualFont, forKey: HL.manualFont); d.set(manualSize, forKey: HL.manualSize)
         d.set(italic, forKey: HL.italic)
     }
@@ -143,22 +170,38 @@ struct OverlayStyle: Sendable, Codable, Equatable {
         func double(_ key: String, _ fallback: Double) -> Double {
             d.object(forKey: key) == nil ? fallback : d.double(forKey: key)
         }
+        let def = defaults
         return OverlayStyle(
-            show: bool(HL.show, true),
-            showBoxes: bool(HL.showBoxes, true),
-            showText: bool(HL.showText, true),
-            boxHex: d.string(forKey: HL.boxHex) ?? HL.defaultBox,
-            opacity: double(HL.opacity, 0.35),
-            outline: bool(HL.outline, true),
-            textHex: d.string(forKey: HL.textHex) ?? HL.defaultText,
-            autoTextColor: bool(HL.autoTextColor, true),
-            bgHex: d.string(forKey: HL.bgHex) ?? HL.defaultBg,
-            autoBg: bool(HL.autoBg, true),
-            design: d.string(forKey: HL.design) ?? "default",
-            weight: d.string(forKey: HL.weight) ?? "regular",
-            autoFont: bool(HL.autoFont, false),
-            manualFont: d.string(forKey: HL.manualFont) ?? "",
-            manualSize: double(HL.manualSize, 0),
-            italic: bool(HL.italic, false))
+            show: bool(HL.show, def.show),
+            showBoxes: bool(HL.showBoxes, def.showBoxes),
+            showText: bool(HL.showText, def.showText),
+            boxHex: d.string(forKey: HL.boxHex) ?? def.boxHex,
+            opacity: double(HL.opacity, def.opacity),
+            outline: bool(HL.outline, def.outline),
+            textHex: d.string(forKey: HL.textHex) ?? def.textHex,
+            autoTextColor: bool(HL.autoTextColor, def.autoTextColor),
+            bgHex: d.string(forKey: HL.bgHex) ?? def.bgHex,
+            autoBg: bool(HL.autoBg, def.autoBg),
+            design: d.string(forKey: HL.design).flatMap(TextDesign.init(rawValue:)) ?? def.design,
+            weight: d.string(forKey: HL.weight).flatMap(TextWeight.init(rawValue:)) ?? def.weight,
+            autoFont: bool(HL.autoFont, def.autoFont),
+            manualFont: d.string(forKey: HL.manualFont) ?? def.manualFont,
+            manualSize: double(HL.manualSize, def.manualSize),
+            italic: bool(HL.italic, def.italic))
+    }
+
+    /// Whether any font setting differs from automatic — what resetFontToAutomatic undoes.
+    var fontIsOverridden: Bool {
+        !manualFont.isEmpty || manualSize > 0 || manualTracking != nil
+            || manualSmoothness != nil || !kerning || weight == .bold || italic
+    }
+
+    /// Font, size, spacing and smoothness back to what is matched and fitted from the image,
+    /// regular weight, no italic, the font's own kerning.
+    mutating func resetFontToAutomatic() {
+        manualFont = ""; autoFont = true
+        manualSize = 0; manualTracking = nil; manualSmoothness = nil
+        kerning = true
+        weight = .regular; italic = false
     }
 }

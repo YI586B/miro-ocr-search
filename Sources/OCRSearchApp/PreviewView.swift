@@ -57,14 +57,14 @@ struct PreviewView: View {
     /// Pixels per point for this image; see imagePointScale. Sizes shown and typed are points.
     @State private var imageScale: CGFloat = 1
     /// App-wide watermark switch; see Watermark. Held here so the preview redraws when it changes.
-    @AppStorage(Watermark.key) private var watermarkOn = true
+    @AppStorage(Watermark.key) private var watermarkOn = Watermark.defaultOn
     /// Whether the overlay is drawn, and whether it has boxes, text or both. App-wide rather than per image:
     /// these are how you are looking at whatever is open, not facts about one screenshot, and
     /// having them follow each image meant paging through results kept changing the view out from
     /// under you. The rest of the style stays per image — see OverlayStyle.
-    @AppStorage(HL.show) private var overlayOn = true
-    @AppStorage(HL.showBoxes) private var showBoxes = true
-    @AppStorage(HL.showText) private var showText = true
+    @AppStorage(HL.show) private var overlayOn = OverlayStyle.defaults.show
+    @AppStorage(HL.showBoxes) private var showBoxes = OverlayStyle.defaults.showBoxes
+    @AppStorage(HL.showText) private var showText = OverlayStyle.defaults.showText
     /// Fitted font size per match, in image pixels, computed once per change of match, font or
     /// weight rather than on demand — fitting takes several font-metric lookups, and computing it
     /// inside a view body re-ran it on every mouse-move while hovering any match.
@@ -415,12 +415,6 @@ struct PreviewView: View {
         }
     }
 
-    /// Whether any font setting differs from automatic — what "Font to Automatic" would undo.
-    private var fontOverridden: Bool {
-        !style.manualFont.isEmpty || style.manualSize > 0 || style.manualTracking != nil
-            || style.manualSmoothness != nil || !style.kerning || style.weight == "bold" || style.italic
-    }
-
     /// Says that these controls affect this image only, and holds the ways out of that: the one
     /// Reset menu (font only, this image, or a full recalculation) and making this look the default.
     private var imageScopeFooter: some View {
@@ -429,13 +423,8 @@ struct PreviewView: View {
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Menu("Reset") {
-                    Button("Font to Automatic") {
-                        style.manualFont = ""; style.autoFont = true
-                        style.manualSize = 0; style.manualTracking = nil; style.manualSmoothness = nil
-                        style.kerning = true
-                        style.weight = "regular"; style.italic = false
-                    }
-                    .disabled(!fontOverridden)
+                    Button("Font to Automatic") { style.resetFontToAutomatic() }
+                        .disabled(!style.fontIsOverridden)
                     Button("This Image to Defaults") {
                         OverlayStyle.clear(path)
                         style = OverlayStyle.current()
@@ -501,10 +490,7 @@ struct PreviewView: View {
     /// The overlay, Boxes and Text switches survive: those are how you are looking at the image,
     /// not estimates about it.
     private func refresh() {
-        style.manualFont = ""; style.autoFont = true
-        style.manualSize = 0; style.manualTracking = nil; style.manualSmoothness = nil
-        style.kerning = true
-        style.weight = "regular"; style.italic = false
+        style.resetFontToAutomatic()
         style.autoTextColor = true; style.autoBg = true
         reloadToken += 1
     }
@@ -659,7 +645,7 @@ struct PreviewView: View {
                         .toggleStyle(.button).controlSize(.small)
                         .help("Size each match to the glyphs measured on the image. Typing a size turns this off.")
                     Spacer()
-                    Toggle(isOn: Binding(get: { style.weight == "bold" }, set: { style.weight = $0 ? "bold" : "regular" })) {
+                    Toggle(isOn: Binding(get: { style.weight == .bold }, set: { style.weight = $0 ? .bold : .regular })) {
                         Text("B").bold()
                     }.toggleStyle(.button).help("Bold").accessibilityLabel("Bold")
                     Toggle(isOn: $style.italic) {
@@ -843,13 +829,13 @@ struct PreviewView: View {
                 // when they could not be isolated — see inkFittedFontSize for why the box makes
                 // a poor ruler.
                 if let measured = ink[safe: i] ?? nil, measured.rect.height * px.height > 1 {
-                    return inkFittedFontSize(for: it.text, weight: HL.fontWeight(w), design: HL.fontDesign(d),
+                    return inkFittedFontSize(for: it.text, weight: w.font, design: d.font,
                                              matchedFamily: family,
                                              fitting: CGSize(width: measured.rect.width * px.width,
                                                              height: measured.rect.height * px.height))
                 }
                 let box = CGSize(width: it.rect.width * px.width, height: it.rect.height * px.height)
-                return effectiveFontSize(for: it.text, weight: HL.fontWeight(w), design: HL.fontDesign(d),
+                return effectiveFontSize(for: it.text, weight: w.font, design: d.font,
                                          matchedFamily: family, fitting: box)
             }
         }.value
@@ -867,8 +853,8 @@ struct PreviewView: View {
             guard let measured = inkSamples[safe: i] ?? nil else { return 0 }
             let size = style.manualSize > 0 ? CGFloat(style.manualSize) * imageScale
                                             : (fontSizes[safe: i] ?? 12)
-            let font = matchFont(size: size, weight: HL.fontWeight(style.weight),
-                                 design: HL.fontDesign(style.design),
+            let font = matchFont(size: size, weight: style.weight.font,
+                                 design: style.design.font,
                                  matchedFamily: matchedFonts[safe: i] ?? nil)
             return inkFittedTracking(for: m.text, font: font, kerning: style.kerning,
                                      inkWidth: measured.rect.width * pixelSize.width)
@@ -890,7 +876,7 @@ struct MatchInfoPopup: View {
     /// The size of this match's own glyphs, in the image's pixels.
     let boxSize: CGSize
     let fontSize: CGFloat
-    let design: String, weight: String
+    let design: TextDesign, weight: TextWeight
     let boxColor: Color, textColor: Color, bgColor: Color
     let opacity: Double
     var matchedFont: String? = nil
@@ -907,7 +893,7 @@ struct MatchInfoPopup: View {
                 if let mf = matchedFont {
                     row("Font", "\(mf) \(fontIsManual ? "(picked)" : "(matched)"), \(Int(fontSize.rounded()))pt")
                 } else {
-                    row("Font", "\(fontLabel) \(weightLabel), \(Int(fontSize.rounded()))pt")
+                    row("Font", "\(design.label) \(weight.label), \(Int(fontSize.rounded()))pt")
                 }
                 colorRow("Text color", textColor)
                 colorRow("Background", bgColor)
@@ -926,8 +912,6 @@ struct MatchInfoPopup: View {
         .frame(width: 200, alignment: .leading)
     }
 
-    private var fontLabel: String { design == "default" ? "System" : design.capitalized }
-    private var weightLabel: String { weight.capitalized }
 
     private func row(_ label: String, _ value: String) -> some View {
         HStack { Text(label).foregroundStyle(.secondary); Spacer(); Text(value) }.font(.caption)

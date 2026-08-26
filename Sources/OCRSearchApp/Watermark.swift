@@ -119,11 +119,12 @@ struct MiroBadge: View {
 /// accident or in passing, which is what a gate like this can actually do.
 enum Watermark {
     static let key = "watermarkEnabled"
+    static let defaultOn = true
     private static let digest = "21a0ff4404a302a0d5435a67e1e62accea0c07b0c48730576f1369808d4597d9"
 
     static var isOn: Bool {
         let d = UserDefaults.standard
-        return d.object(forKey: key) == nil ? true : d.bool(forKey: key)
+        return d.object(forKey: key) == nil ? defaultOn : d.bool(forKey: key)
     }
 
     static func matches(_ attempt: String) -> Bool {

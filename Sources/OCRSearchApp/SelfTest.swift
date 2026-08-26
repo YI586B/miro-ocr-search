@@ -15,8 +15,24 @@ enum SelfTest {
     static func runIfRequested() {
         let a = CommandLine.arguments
         guard let i = a.firstIndex(of: "--selftest"), a.count > i + 2 else { return }
+        guard legacyStyleDecodes() else { print("FAILED: a saved style from an earlier version no longer loads"); exit(1) }
         run(images: URL(fileURLWithPath: a[i + 1]), out: URL(fileURLWithPath: a[i + 2]))
         exit(0)
+    }
+
+    /// A per-image style as saved by earlier versions — with the old Boxes-or-Text `mode` and
+    /// font design and weight as plain strings — must still load, or every image's saved look
+    /// would silently fall back to the defaults.
+    static func legacyStyleDecodes() -> Bool {
+        let json = ##"{"show":true,"mode":"text","boxHex":"#FFD60A","opacity":0.5,"outline":false,"##
+            + ##""textHex":"#112233","autoTextColor":false,"bgHex":"#EEEEEE","autoBg":true,"design":"serif","##
+            + ##""weight":"bold","autoFont":true,"manualFont":"Helvetica","manualTracking":0.3,"kerning":false,"##
+            + ##""manualSmoothness":0.4,"manualSize":14,"italic":true}"##
+        guard let s = try? JSONDecoder().decode(OverlayStyle.self, from: Data(json.utf8)) else { return false }
+        return s.design == .serif && s.weight == .bold && s.opacity == 0.5 && !s.outline
+            && s.textHex == "#112233" && !s.autoTextColor && s.manualFont == "Helvetica"
+            && s.manualTracking == 0.3 && !s.kerning && s.manualSmoothness == 0.4 && s.manualSize == 14
+            && s.italic && s.autoFont
     }
 
     struct Case {
@@ -34,10 +50,10 @@ enum SelfTest {
         var manual = OverlayStyle()
         manual.showBoxes = false; manual.autoFont = false; manual.manualFont = "Helvetica"
         manual.manualSize = 14; manual.manualTracking = 0.3; manual.manualSmoothness = 0.4
-        manual.kerning = false; manual.weight = "bold"; manual.italic = true
+        manual.kerning = false; manual.weight = .bold; manual.italic = true
         manual.autoBg = false; manual.bgHex = "#EEEEEE"; manual.autoTextColor = false; manual.textHex = "#112233"
         var designed = OverlayStyle()
-        designed.showBoxes = false; designed.autoFont = false; designed.design = "serif"; designed.weight = "medium"
+        designed.showBoxes = false; designed.autoFont = false; designed.design = .serif; designed.weight = .medium
         designed.outline = false; designed.opacity = 0.5; designed.boxHex = "#33AAFF"
         var boxesStyled = designed; boxesStyled.showBoxes = true; boxesStyled.showText = false
         return [
