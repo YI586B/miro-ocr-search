@@ -103,14 +103,6 @@ public struct MiroClient {
     }
 }
 
-func imagePixelSize(_ url: URL) -> (w: Double, h: Double)? {
-    guard let s = CGImageSourceCreateWithURL(url as CFURL, nil),
-          let p = CGImageSourceCopyPropertiesAtIndex(s, 0, nil) as? [CFString: Any],
-          let w = p[kCGImagePropertyPixelWidth] as? Double,
-          let h = p[kCGImagePropertyPixelHeight] as? Double else { return nil }
-    return (w, h)
-}
-
 /// Lays results out in a grid: image with its OCR snippet as a sticky note underneath.
 /// Creates a new board unless `boardID` is given. Returns the board's view link.
 public func exportToMiro(items: [(path: String, snippet: String)], token: String,
@@ -126,7 +118,10 @@ public func exportToMiro(items: [(path: String, snippet: String)], token: String
         let url = URL(fileURLWithPath: item.path)
         let cx = Double(i % cols) * cellW, top = Double(i / cols) * cellH
         var w = maxW, h = maxH
-        if let s = imagePixelSize(url) { let k = min(maxW / s.w, maxH / s.h); w = s.w * k; h = s.h * k }
+        if let s = imagePixelSize(at: url.path) {
+            let sw = Double(s.width), sh = Double(s.height)
+            let k = min(maxW / sw, maxH / sh); w = sw * k; h = sh * k
+        }
         do {
             try client.addImage(board: board, file: url, x: cx, y: top + h / 2, width: w)
             if !item.snippet.isEmpty {

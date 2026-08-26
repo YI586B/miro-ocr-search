@@ -318,15 +318,6 @@ struct PreviewRequest: Codable, Hashable {
     }
 }
 
-/// An image's pixel dimensions, read from its metadata without decoding the full bitmap.
-func imagePixelSize(at path: String) -> CGSize? {
-    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
-          let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
-          let w = props[kCGImagePropertyPixelWidth] as? CGFloat,
-          let h = props[kCGImagePropertyPixelHeight] as? CGFloat else { return nil }
-    return CGSize(width: w, height: h)
-}
-
 /// Pixels per point for an image: 2 for a screenshot saved at 144 dpi, 1 for one at 72.
 ///
 /// This folder mixes both — IMG_0849 is 1356x2948 at 72 dpi while the rest are 1206x2622 at 144 —
@@ -655,21 +646,15 @@ struct PreviewView: View {
     @AppStorage(HL.show) private var overlayOn = true
     @AppStorage(HL.showBoxes) private var showBoxes = true
     @AppStorage(HL.showText) private var showText = true
-    /// Fitted font size per match, computed once at the image's native pixel scale rather than
-    /// on demand — fitting takes several font-metric lookups, and computing it live inside
-    /// MatchView/MatchInfoPopup's body meant it re-ran on every mouse-move while hovering *any*
-    /// match, for *every* visible match, which was especially slow with auto-font on (family
-    /// lookups, not just system-font construction). Scaled to the actual on-screen size at
-    /// render time (a cheap multiply) via displayFontSize(_:in:).
+    /// Fitted font size per match, in image pixels, computed once per change of match, font or
+    /// weight rather than on demand — fitting takes several font-metric lookups, and computing it
+    /// inside a view body re-ran it on every mouse-move while hovering any match.
     @State private var fontSizes: [CGFloat] = []
     /// Letter spacing fitted per match, alongside the sizes and for the same reason: it depends on
     /// the font, so it is worked out again whenever the font, weight or size changes.
     @State private var trackings: [CGFloat] = []
     /// Blur fitted per match so the redrawn text is as soft as the text it covers.
     @State private var smoothness: [CGFloat] = []
-    /// Exact renderable name (PostScript name) for each match's matchedFont, resolved once
-    /// instead of on every render — see renderableFontName.
-    @State private var renderedFontNames: [String?] = []
     @State private var scanning = false
     @State private var failed = false
     @State private var hoverIndex: Int?
@@ -683,9 +668,8 @@ struct PreviewView: View {
     /// which case the hover card is placed at the match instead of at the cursor.
     @State private var keyboardMatch = false
     /// Mirrors the GeometryReader's `scale` (display points per native image pixel) outside of
-    /// it, so the toolbar's Size field — which lives in .toolbar, with no access to that
-    /// GeometryReader — can show and set a size in the same on-screen points the user actually
-    /// sees, matching how every other text-size field works, rather than some internal unit.
+    /// it, for the zoom readout and the zoom buttons, which live in .toolbar with no access to
+    /// that GeometryReader.
     @State private var displayScale: CGFloat = 1
     /// On-screen points per image pixel, or nil to fit the window. Explicit rather than a
     /// multiplier of the fit scale, so a zoom level survives resizing the window and reads as a
@@ -901,7 +885,7 @@ struct PreviewView: View {
             style = OverlayStyle.forImage(path)
             image = NSImage(contentsOfFile: path)
             failed = image == nil
-            bgColors = []; inkSamples = []; matchedFonts = []; fontSizes = []; trackings = []; smoothness = []; renderedFontNames = []
+            bgColors = []; inkSamples = []; matchedFonts = []; fontSizes = []; trackings = []; smoothness = []
             pixelSize = .zero; detectedFontName = nil
             let terms = searchTerms(query, mode: searchMode)
             guard image != nil, !terms.isEmpty else { return }
@@ -924,7 +908,6 @@ struct PreviewView: View {
             // only honest if X has actually been worked out.
             if showText { await detectFonts() }
             await recomputeFontSizes()
-            recomputeRenderedFontNames()
             rebuildOverlay()
             scanning = false
         }
@@ -940,19 +923,17 @@ struct PreviewView: View {
             Task {
                 if on { await detectFonts() }
                 await recomputeFontSizes()
-                recomputeRenderedFontNames()
                 rebuildOverlay()
             }
         }
         .onChange(of: style.design) { _ in Task { await recomputeFontSizes(); rebuildOverlay() } }
-        .onChange(of: style.weight) { _ in Task { await recomputeFontSizes(); recomputeRenderedFontNames(); rebuildOverlay() } }
+        .onChange(of: style.weight) { _ in Task { await recomputeFontSizes(); rebuildOverlay() } }
         .onChange(of: overlayOn) { _ in rebuildOverlay() }
         .onChange(of: showBoxes) { _ in rebuildOverlay() }
         .onChange(of: showText) { _ in
             Task {
                 if showText, detectedFontName == nil { await detectFonts() }
                 await recomputeFontSizes()
-                recomputeRenderedFontNames()
                 rebuildOverlay()
             }
         }
@@ -960,7 +941,7 @@ struct PreviewView: View {
         .onChange(of: style.manualSize) { _ in recomputeTrackings(); rebuildOverlay() }
         .onChange(of: style.manualFont) { _ in
             applyFontOverride()
-            Task { await recomputeFontSizes(); recomputeRenderedFontNames(); rebuildOverlay() }
+            Task { await recomputeFontSizes(); rebuildOverlay() }
         }
     }
 
@@ -1098,8 +1079,8 @@ struct PreviewView: View {
     /// anything remembered, which is what makes this the thing to reach for when an image has
     /// changed on disk or a previous scan went wrong.
     ///
-    /// Mode and the overlay switch survive: those are how you are looking at the image, not
-    /// estimates about it.
+    /// The overlay, Boxes and Text switches survive: those are how you are looking at the image,
+    /// not estimates about it.
     private func refresh() {
         style.manualFont = ""; style.autoFont = true
         style.manualSize = 0; style.manualTracking = nil; style.manualSmoothness = nil
@@ -1174,155 +1155,154 @@ struct PreviewView: View {
         }
     }
 
-    /// The Font section of the style popover: which family, how big, how tightly spaced,
-    /// and the weight and slant. Pulled out of the popover's body because that body had grown
-    /// past what the type-checker would infer in reasonable time -- and because this is the
-    /// part of the panel with real logic in it, so it reads better on its own.
+    /// The Font section of the style panel: which family, how big, how tightly spaced, and the
+    /// weight and slant. Kept apart from inspectorPanel because the combined body grew past what
+    /// the type-checker would infer in reasonable time, and because this is the part of the
+    /// panel with real logic in it.
     @ViewBuilder private var fontSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-                    // Laid out like an ordinary text-editing toolbar (font, point size,
-                    // then Bold/Italic toggles) rather than a settings-style option list.
-                    // Picking a font or typing a size overrides whatever auto-match/fit
-                    // found (and turns auto-match on, if it was off, so the change takes
-                    // visible effect immediately); "Auto" in the font menu, or the Reset
-                    // button once anything is overridden, goes back to automatic.
-                    // The auto-fitted size this field shows while nothing is overriding
-                    // it. Deliberately the *first* match's size and not the hovered one:
-                    // the guard below decides whether a commit is a real edit by comparing
-                    // it against what the field was showing, and a value that moves with
-                    // the cursor defeats that. Hovering a smaller match redrew the field,
-                    // and the next commit then looked like the user had asked for the
-                    // previous, larger number — which is how a 15pt override got stored
-                    // and made every match on the page 15pt, several too large for the
-                    // smaller ones. Per-match sizes are still on the hover card.
+            // Laid out like an ordinary text-editing toolbar (font, point size,
+            // then Bold/Italic toggles) rather than a settings-style option list.
+            // Picking a font or typing a value overrides whatever auto-match/fit
+            // found; "Auto" in the font menu, the Auto buttons, or Reset ▸ Font to
+            // Automatic goes back to automatic.
+            // The auto-fitted size this field shows while nothing is overriding
+            // it. Deliberately the *first* match's size and not the hovered one:
+            // the guard below decides whether a commit is a real edit by comparing
+            // it against what the field was showing, and a value that moves with
+            // the cursor defeats that. Hovering a smaller match redrew the field,
+            // and the next commit then looked like the user had asked for the
+            // previous, larger number — which is how a 15pt override got stored
+            // and made every match on the page 15pt, several too large for the
+            // smaller ones. Per-match sizes are still on the hover card.
 
-                    let autoSizeShown = Double(((fontSizes.first ?? 17) / imageScale).rounded())
-                    let sizeBinding = Binding<Double>(
-                        get: { style.manualSize > 0 ? style.manualSize : autoSizeShown },
-                        // A TextField(value:) commits whatever it is currently showing
-                        // every time it loses focus, whether or not the user typed
-                        // anything -- and while the size is automatic, what it shows is
-                        // the auto-fitted size. Writing that straight through silently
-                        // turned "auto" into a manual override pinned to one match on one
-                        // image, which then never adapted again: the font size looked
-                        // stuck, and auto-fit looked broken. So a value that matches what
-                        // auto is already offering is not an override; only a value the
-                        // user actually changed is. (This was found in the wild as a
-                        // stored override of exactly 17pt -- the placeholder this field
-                        // falls back to before anything has been fitted.)
-                        set: { typed in
-                            let v = max(typed, 1)
-                            guard style.manualSize > 0 || abs(v - autoSizeShown) >= 0.5 else { return }
-                            style.manualSize = v
+            let autoSizeShown = Double(((fontSizes.first ?? 17) / imageScale).rounded())
+            let sizeBinding = Binding<Double>(
+                get: { style.manualSize > 0 ? style.manualSize : autoSizeShown },
+                // A TextField(value:) commits whatever it is currently showing
+                // every time it loses focus, whether or not the user typed
+                // anything -- and while the size is automatic, what it shows is
+                // the auto-fitted size. Writing that straight through silently
+                // turned "auto" into a manual override pinned to one match on one
+                // image, which then never adapted again: the font size looked
+                // stuck, and auto-fit looked broken. So a value that matches what
+                // auto is already offering is not an override; only a value the
+                // user actually changed is. (This was found in the wild as a
+                // stored override of exactly 17pt -- the placeholder this field
+                // falls back to before anything has been fitted.)
+                set: { typed in
+                    let v = max(typed, 1)
+                    guard style.manualSize > 0 || abs(v - autoSizeShown) >= 0.5 else { return }
+                    style.manualSize = v
+                }
+            )
+            VStack(alignment: .leading, spacing: 8) {
+                sectionHeader("Font")
+                Toggle("Match font from image", isOn: Binding(
+                    get: { style.autoFont },
+                    // Turning it back on drops whatever font was picked, so the
+                    // font detected from the image takes over again — which is
+                    // what the toggle says it does.
+                    set: { on in
+                        style.autoFont = on
+                        if on { style.manualFont = "" }
+                    }))
+                    .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font). Picking a font below turns this off.")
+                Picker("", selection: Binding<String>(
+                        get: { style.manualFont },
+                        // Picking a specific font is the opposite of matching one
+                        // from the image, so the toggle follows it; choosing
+                        // "Auto" turns matching back on.
+                        set: { picked in
+                            style.manualFont = picked
+                            style.autoFont = picked.isEmpty
                         }
-                    )
-                    VStack(alignment: .leading, spacing: 8) {
-                        sectionHeader("Font")
-                        Toggle("Match font from image", isOn: Binding(
-                            get: { style.autoFont },
-                            // Turning it back on drops whatever font was picked, so the
-                            // font detected from the image takes over again — which is
-                            // what the toggle says it does.
-                            set: { on in
-                                style.autoFont = on
-                                if on { style.manualFont = "" }
-                            }))
-                            .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font). Picking a font below turns this off.")
-                        Picker("", selection: Binding<String>(
-                                get: { style.manualFont },
-                                // Picking a specific font is the opposite of matching one
-                                // from the image, so the toggle follows it; choosing
-                                // "Auto" turns matching back on.
-                                set: { picked in
-                                    style.manualFont = picked
-                                    style.autoFont = picked.isEmpty
-                                }
-                            )) {
-                                Text(detectedFontName.map { "Auto (\($0))" } ?? "Auto").tag("")
-                                Divider()
-                                ForEach(candidateFontFamilies(), id: \.self) { Text($0).tag($0) }
-                            }
-                            .labelsHidden().frame(maxWidth: .infinity)
-                        // Size, then Bold and Italic, on one row as in a text-editing toolbar.
-                        HStack(spacing: 6) {
-                            Text("Size").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)
-                            TextField("", value: sizeBinding, format: .number)
-                                .textFieldStyle(.roundedBorder).frame(width: 46)
-                                .multilineTextAlignment(.trailing)
-                            Stepper("", value: sizeBinding, in: 1...400).labelsHidden()
-                            Text("pt").font(.caption).foregroundStyle(.secondary)
-                            // Derived from manualSize rather than stored beside it: a second
-                            // flag could disagree with the number it describes, which is
-                            // exactly what went wrong with the font toggle.
-                            Toggle("Auto", isOn: Binding(
-                                get: { style.manualSize == 0 },
-                                set: { on in style.manualSize = on ? 0 : autoSizeShown }))
-                                .toggleStyle(.button).controlSize(.small)
-                                .help("Size each match to the glyphs measured on the image. Typing a size turns this off.")
-                            Spacer()
-                            Toggle(isOn: Binding(get: { style.weight == "bold" }, set: { style.weight = $0 ? "bold" : "regular" })) {
-                                Text("B").bold()
-                            }.toggleStyle(.button).help("Bold").accessibilityLabel("Bold")
-                            Toggle(isOn: $style.italic) {
-                                Text("I").italic()
-                            }.toggleStyle(.button).help("Italic").accessibilityLabel("Italic")
-                        }
-                        // Spacing, fitted to the width the original glyphs occupied. It is
-                        // what makes a substituted font track the original across a word
-                        // rather than drifting apart from it, so it is re-fitted whenever
-                        // the font changes.
-                        let fittedTracking = Double(((trackings.first ?? 0) / imageScale * 10).rounded() / 10)
-                        let trackingBinding = Binding<Double>(
-                            get: { style.manualTracking ?? fittedTracking },
-                            set: { typed in
-                                guard style.manualTracking != nil || abs(typed - fittedTracking) >= 0.05
-                                else { return }
-                                style.manualTracking = typed
-                            }
-                        )
-                        HStack(spacing: 8) {
-                            Text("Spacing").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)
-                            TextField("", value: trackingBinding, format: .number)
-                                .textFieldStyle(.roundedBorder).frame(width: 46)
-                                .multilineTextAlignment(.trailing)
-                            Stepper("", value: trackingBinding, in: -20...20, step: 0.1).labelsHidden()
-                            Text("pt").font(.caption).foregroundStyle(.secondary)
-                            Toggle("Auto", isOn: Binding(
-                                get: { style.manualTracking == nil },
-                                set: { on in style.manualTracking = on ? nil : fittedTracking }))
-                                .toggleStyle(.button).controlSize(.small)
-                                .help("Space the letters so the redrawn word spans the same width as the original. Typing a value turns this off.")
-                            Spacer()
-                        }
-                        // Softness, matched to how soft the covered text's edges are. Text drawn
-                        // fresh is crisper than text that has been through a screenshot's
-                        // resampling, and on an image that has been scaled the difference shows.
-                        let fittedSmoothness = Double(((smoothness.first ?? 0) / imageScale * 100).rounded() / 100)
-                        let smoothBinding = Binding<Double>(
-                            get: { style.manualSmoothness ?? fittedSmoothness },
-                            set: { typed in
-                                guard style.manualSmoothness != nil || abs(typed - fittedSmoothness) >= 0.005
-                                else { return }
-                                style.manualSmoothness = max(typed, 0)
-                            }
-                        )
-                        HStack(spacing: 8) {
-                            Text("Smoothness").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)
-                            TextField("", value: smoothBinding, format: .number.precision(.fractionLength(0...2)))
-                                .textFieldStyle(.roundedBorder).frame(width: 46)
-                                .multilineTextAlignment(.trailing)
-                            Stepper("", value: smoothBinding, in: 0...10, step: 0.05).labelsHidden()
-                            Text("pt").font(.caption).foregroundStyle(.secondary)
-                            Toggle("Auto", isOn: Binding(
-                                get: { style.manualSmoothness == nil },
-                                set: { on in style.manualSmoothness = on ? nil : fittedSmoothness }))
-                                .toggleStyle(.button).controlSize(.small)
-                                .help("Soften the redrawn text to the same degree as the text it covers. Typing a value turns this off.")
-                            Spacer()
-                        }
-                        Toggle("Kerning", isOn: $style.kerning)
-                            .help("Use the font's own pair kerning. Off spaces every pair evenly.")
+                    )) {
+                        Text(detectedFontName.map { "Auto (\($0))" } ?? "Auto").tag("")
+                        Divider()
+                        ForEach(candidateFontFamilies(), id: \.self) { Text($0).tag($0) }
                     }
+                    .labelsHidden().frame(maxWidth: .infinity)
+                // Size, then Bold and Italic, on one row as in a text-editing toolbar.
+                HStack(spacing: 6) {
+                    Text("Size").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)
+                    TextField("", value: sizeBinding, format: .number)
+                        .textFieldStyle(.roundedBorder).frame(width: 46)
+                        .multilineTextAlignment(.trailing)
+                    Stepper("", value: sizeBinding, in: 1...400).labelsHidden()
+                    Text("pt").font(.caption).foregroundStyle(.secondary)
+                    // Derived from manualSize rather than stored beside it: a second
+                    // flag could disagree with the number it describes, which is
+                    // exactly what went wrong with the font toggle.
+                    Toggle("Auto", isOn: Binding(
+                        get: { style.manualSize == 0 },
+                        set: { on in style.manualSize = on ? 0 : autoSizeShown }))
+                        .toggleStyle(.button).controlSize(.small)
+                        .help("Size each match to the glyphs measured on the image. Typing a size turns this off.")
+                    Spacer()
+                    Toggle(isOn: Binding(get: { style.weight == "bold" }, set: { style.weight = $0 ? "bold" : "regular" })) {
+                        Text("B").bold()
+                    }.toggleStyle(.button).help("Bold").accessibilityLabel("Bold")
+                    Toggle(isOn: $style.italic) {
+                        Text("I").italic()
+                    }.toggleStyle(.button).help("Italic").accessibilityLabel("Italic")
+                }
+                // Spacing, fitted to the width the original glyphs occupied. It is
+                // what makes a substituted font track the original across a word
+                // rather than drifting apart from it, so it is re-fitted whenever
+                // the font changes.
+                let fittedTracking = Double(((trackings.first ?? 0) / imageScale * 10).rounded() / 10)
+                let trackingBinding = Binding<Double>(
+                    get: { style.manualTracking ?? fittedTracking },
+                    set: { typed in
+                        guard style.manualTracking != nil || abs(typed - fittedTracking) >= 0.05
+                        else { return }
+                        style.manualTracking = typed
+                    }
+                )
+                HStack(spacing: 8) {
+                    Text("Spacing").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)
+                    TextField("", value: trackingBinding, format: .number)
+                        .textFieldStyle(.roundedBorder).frame(width: 46)
+                        .multilineTextAlignment(.trailing)
+                    Stepper("", value: trackingBinding, in: -20...20, step: 0.1).labelsHidden()
+                    Text("pt").font(.caption).foregroundStyle(.secondary)
+                    Toggle("Auto", isOn: Binding(
+                        get: { style.manualTracking == nil },
+                        set: { on in style.manualTracking = on ? nil : fittedTracking }))
+                        .toggleStyle(.button).controlSize(.small)
+                        .help("Space the letters so the redrawn word spans the same width as the original. Typing a value turns this off.")
+                    Spacer()
+                }
+                // Softness, matched to how soft the covered text's edges are. Text drawn
+                // fresh is crisper than text that has been through a screenshot's
+                // resampling, and on an image that has been scaled the difference shows.
+                let fittedSmoothness = Double(((smoothness.first ?? 0) / imageScale * 100).rounded() / 100)
+                let smoothBinding = Binding<Double>(
+                    get: { style.manualSmoothness ?? fittedSmoothness },
+                    set: { typed in
+                        guard style.manualSmoothness != nil || abs(typed - fittedSmoothness) >= 0.005
+                        else { return }
+                        style.manualSmoothness = max(typed, 0)
+                    }
+                )
+                HStack(spacing: 8) {
+                    Text("Smoothness").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)
+                    TextField("", value: smoothBinding, format: .number.precision(.fractionLength(0...2)))
+                        .textFieldStyle(.roundedBorder).frame(width: 46)
+                        .multilineTextAlignment(.trailing)
+                    Stepper("", value: smoothBinding, in: 0...10, step: 0.05).labelsHidden()
+                    Text("pt").font(.caption).foregroundStyle(.secondary)
+                    Toggle("Auto", isOn: Binding(
+                        get: { style.manualSmoothness == nil },
+                        set: { on in style.manualSmoothness = on ? nil : fittedSmoothness }))
+                        .toggleStyle(.button).controlSize(.small)
+                        .help("Soften the redrawn text to the same degree as the text it covers. Typing a value turns this off.")
+                    Spacer()
+                }
+                Toggle("Kerning", isOn: $style.kerning)
+                    .help("Use the font's own pair kerning. Off spaces every pair evenly.")
+            }
         }
     }
 
@@ -1375,8 +1355,7 @@ struct PreviewView: View {
         .textSelection(.enabled)
     }
 
-    /// Small all-caps caption used to head each group of controls in the style popover — the
-    /// popover had grown well past the point where one flat stack of rows was readable.
+    /// Small all-caps caption heading each group of controls in the style panel.
     private func sectionHeader(_ title: String) -> some View {
         Text(title.uppercased())
             .font(.caption2).fontWeight(.semibold).kerning(0.5)
@@ -1394,8 +1373,8 @@ struct PreviewView: View {
     /// one string to score, it's back to the same single-string-coincidence problem aggregation
     /// was meant to fix). The overlay still only highlights `matches`, as before — this only
     /// changes what font-detection itself is scored against.
-    /// Skipped unless auto-font is on, since scanning every candidate family is real work — only
-    /// worth paying for when the feature is actually in use.
+    /// Run whenever Text is on, so the font menu's "Auto (X)" label is known even while a font is
+    /// picked by hand.
     private func detectFonts() async {
         guard !matches.isEmpty, pixelSize.width > 0, pixelSize.height > 0 else { return }
         let families = candidateFontFamilies()
@@ -1411,7 +1390,7 @@ struct PreviewView: View {
     }
 
     /// The family actually rendered: `style.manualFont` when the user has picked one from the style
-    /// popover's Font picker, otherwise whatever detectFonts() found. Re-run whenever either
+    /// panel's Font menu, otherwise whatever detectFonts() found. Re-run whenever either
     /// changes, without re-scanning the image (detectFonts already did the expensive part).
     private func applyFontOverride() {
         // A font the user picked wins. Otherwise the detected one, but only while "Match font
@@ -1422,25 +1401,17 @@ struct PreviewView: View {
         matchedFonts = Array(repeating: effective, count: matches.count)
     }
 
-    /// Cheap per-frame conversion of a match's cached native-pixel-scale font size (fontSizes,
-    /// see recomputeFontSizes) to on-screen points — a single multiply, safe to call on every
-    /// hover-move or resize instead of re-fitting from scratch. `style.manualSize`, when set, is
-    /// already in on-screen points (that's what the toolbar's Size field shows and edits), so it
-    /// bypasses the native-pixel cache and scale multiply entirely — every match gets exactly
-    /// that point size, the same way setting a size in any text editor applies to the whole
-    /// selection rather than scaling each run individually.
-    /// A match's drawn size, in image pixels — what the renderer will actually use.
     /// A match's drawn size in points — the unit shown and typed. The renderer multiplies by the
-    /// image's own pixels-per-point to get what it draws.
+    /// image's own pixels-per-point to get what it draws. A manual size applies to every match,
+    /// as setting a size in a text editor applies to the whole selection.
     private func imageFontSize(_ i: Int) -> CGFloat {
         if style.manualSize > 0 { return style.manualSize }
         return (fontSizes.indices.contains(i) ? fontSizes[i] : 12) / imageScale
     }
 
     /// Fits each match's font size once, at the image's native pixel scale rather than the
-    /// current window size, so it only needs recomputing when the matches, matched fonts,
-    /// style.design or style.weight actually change — never on hover or window resize (the view just scales
-    /// the cached result at render time via `displayFontSize(_:scale:)`).
+    /// current window size, so it only needs recomputing when the matches, matched fonts, design
+    /// or weight change — never on hover, zoom or window resize.
     private func recomputeFontSizes() async {
         guard !matches.isEmpty, pixelSize.width > 0, pixelSize.height > 0 else { fontSizes = []; return }
         let items = matches.map { (text: $0.text, rect: $0.rect) }
@@ -1484,13 +1455,6 @@ struct PreviewView: View {
                                      inkWidth: measured.rect.width * pixelSize.width)
         }
     }
-
-    /// Resolves each matched family to its exact renderable (PostScript) name once, instead of
-    /// on every render — see renderableFontName.
-    private func recomputeRenderedFontNames() {
-        let bold = style.weight == "bold"
-        renderedFontNames = matchedFonts.map { $0.map { renderableFontName(family: $0, bold: bold) } }
-    }
 }
 
 struct ContentView: View {
@@ -1503,7 +1467,7 @@ struct ContentView: View {
             HStack {
                 TextField("Search text inside images", text: $m.query)
                     .textFieldStyle(.roundedBorder).onSubmit { m.search() }
-                    .help("Type any text and press Return. Advanced: AND / OR / NOT, \"exact phrase\", word* — see the FTS5 query syntax.")
+                    .help("Type any text and press Return. Phrase finds the whole text in order; Any word finds each word on its own.")
                 Picker("", selection: $m.searchMode) {
                     Text("Phrase").tag(SearchMode.phrase)
                     Text("Any word").tag(SearchMode.words)
@@ -1533,7 +1497,7 @@ struct ContentView: View {
 
                 Button { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) } label: {
                     Image(systemName: "gearshape")
-                }.help("Settings (highlight color)").accessibilityLabel("Settings")
+                }.help("Settings: the overlay's default look").accessibilityLabel("Settings")
             }.padding(10)
             .onAppear { m.restoreFolder() }
             Divider()

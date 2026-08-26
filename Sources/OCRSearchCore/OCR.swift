@@ -22,6 +22,15 @@ public func recognizeText(at url: URL) throws -> String {
 
 /// Bounding boxes (normalised 0-1, origin bottom-left, as Vision reports them) of every
 /// occurrence of any of `terms` in the image's text. Case- and accent-insensitive.
+/// An image's pixel dimensions, read from its metadata without decoding the full bitmap.
+public func imagePixelSize(at path: String) -> CGSize? {
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+          let w = props[kCGImagePropertyPixelWidth] as? CGFloat,
+          let h = props[kCGImagePropertyPixelHeight] as? CGFloat else { return nil }
+    return CGSize(width: w, height: h)
+}
+
 public struct TextMatch: Sendable {
     public let rect: CGRect   // normalised, origin bottom-left
     public let text: String   // the text as recognised on the image

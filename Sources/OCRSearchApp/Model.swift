@@ -57,7 +57,7 @@ final class Model: ObservableObject {
     }
     @Published var results: [Hit] = []
     @Published var selection = Set<String>()
-    @Published var status = "Index a folder to get started."
+    @Published var status = "Open a folder to get started."
     @Published var busy = false
     @Published var boardID = ""
     @Published var boardName = "OCR search"

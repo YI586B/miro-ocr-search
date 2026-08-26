@@ -1,3 +1,4 @@
+// imageExts is shared; dbPath and indexFolder are for the ocrsearch CLI only.
 import Foundation
 
 public let imageExts: Set<String> = ["png", "jpg", "jpeg", "heic", "tif", "tiff", "gif", "bmp", "webp"]

@@ -1,3 +1,5 @@
+// The SQLite FTS5 index is used by the ocrsearch CLI only. The app searches the open folder in
+// memory and uses nothing here except SearchMode.
 import Foundation
 import SQLite3
 

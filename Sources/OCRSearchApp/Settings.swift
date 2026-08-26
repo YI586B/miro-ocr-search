@@ -100,31 +100,9 @@ struct MatchView: View {
     let box: Color, textColor: Color
     let opacity: Double, outline: Bool
     let design: String, weight: String
-    /// Color sampled from the image right around this match, used when `autoBackground` is on
-    /// and sampling succeeded. Otherwise (auto-match off, or sampling failed, e.g. no image
-    /// loaded yet) falls back to `background`, the user-picked color — which is then exactly
-    /// what's drawn, so the color picker showing it stays truthful.
-    var sampled: Color? = nil
     var background: Color = .white
-    var autoBackground: Bool = true
-    /// The family to draw in — matched from the image, or picked by the user — used in place of
-    /// `design`. nil means neither applies, so `design` and `weight` are what to use.
-    var matchedFont: String? = nil
-    /// Precomputed by the caller (see PreviewView.recomputeFontSizes) rather than fitted here on
-    /// every render: fitting requires several font-metric lookups, and this view's body re-runs
-    /// on every mouse-move while hovering any match (not just this one), which made auto-font in
-    /// particular noticeably laggy when computed inline.
     var fontSize: CGFloat = 12
-    /// Precomputed exact renderable name (PostScript name) for matchedFont, see
-    /// renderableFontName -- resolving it here on every render was the same kind of hot-path cost.
-    var renderedFontName: String? = nil
-    /// Color sampled from the text's own ink within this match, used when `autoTextColor` is on
-    /// and sampling found something. Otherwise falls back to `textColor`, the user-picked color
-    /// -- mirrors `sampled`/`autoBackground` above exactly, for the same reason.
-    var sampledTextColor: Color? = nil
-    var autoTextColor: Bool = true
-    /// Applied as a view modifier on top of whichever font was chosen (matched family or
-    /// design), rather than resolving a true italic font file: SwiftUI synthesizes an oblique
+    /// Applied as a view modifier on top of the design's font, rather than resolving a true italic font file: SwiftUI synthesizes an oblique
     /// slant when a real italic member isn't available, which is simpler and more reliably
     /// available across arbitrary installed families than hunting for an "-Italic" variant.
     var italic: Bool = false
@@ -133,23 +111,16 @@ struct MatchView: View {
         ZStack {
             if showText {
                 let w = HL.fontWeight(weight), d = HL.fontDesign(design)
-                let useMatch = renderedFontName != nil
-                let effectiveTextColor = (autoTextColor ? sampledTextColor : nil) ?? textColor
                 // .leading, not the default .center: the substitute font's natural width rarely
                 // matches the original's exactly (that's the whole reason fitting exists), so
                 // centering left as much slack on the left as the right, drifting the text's
                 // start away from where the original text actually began. Anchoring the left
                 // edge instead keeps it aligned with the source regardless of any width slack.
                 ZStack(alignment: .leading) {
-                    Rectangle().fill((autoBackground ? sampled : nil) ?? background)
-                    Group {
-                        if useMatch {
-                            Text(text).font(.custom(renderedFontName!, size: fontSize))
-                        }
-                        else { Text(text).font(.system(size: fontSize, weight: w, design: d)) }
-                    }
+                    Rectangle().fill(background)
+                    Text(text).font(.system(size: fontSize, weight: w, design: d))
                     .italic(italic)
-                    .foregroundStyle(effectiveTextColor)
+                    .foregroundStyle(textColor)
                     .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
                 }
                 .frame(width: size.width, height: size.height)
@@ -305,7 +276,7 @@ struct SettingsView: View {
                               showBoxes: showBoxes, showText: showText,
                               box: box.wrappedValue, textColor: txt.wrappedValue, opacity: opacity,
                               outline: outline, design: design, weight: weight,
-                              background: bg.wrappedValue, autoBackground: autoBg,
+                              background: bg.wrappedValue,
                               // The swatch is 26pt tall while a manual size is in image pixels,
                               // which is a much bigger number; clamp so the sample stays legible
                               // rather than overflowing its own box.
