@@ -290,6 +290,7 @@ struct PreviewCommands: Commands {
 @main
 struct OCRSearchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
+    init() { SelfTest.runIfRequested() }
     var body: some Scene {
         WindowGroup("Miro-ocr-search") { ContentView().frame(minWidth: 760, minHeight: 520) }
             .commands { WatermarkCommands(); PreviewCommands() }
