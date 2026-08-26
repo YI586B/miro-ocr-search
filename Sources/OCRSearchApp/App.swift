@@ -212,12 +212,87 @@ struct WatermarkCommands: Commands {
     }
 }
 
+/// What the frontmost preview window offers the menu bar. Published with focusedSceneValue, so
+/// these menu items act on whichever preview is in front and are disabled when none is.
+struct PreviewActions {
+    var zoomIn: () -> Void, zoomOut: () -> Void, actualSize: () -> Void, zoomToFit: () -> Void
+    var canZoomIn: Bool, canZoomOut: Bool
+    var previous: () -> Void, next: () -> Void
+    var hasPrevious: Bool, hasNext: Bool
+    var previousMatch: () -> Void, nextMatch: () -> Void
+    var hasMatches: Bool
+    var recalculate: () -> Void
+    var canRecalculate: Bool
+    var export: () -> Void, reveal: () -> Void
+    var toggleInspector: () -> Void
+    var inspectorShown: Bool
+}
+
+private struct PreviewActionsKey: FocusedValueKey { typealias Value = PreviewActions }
+
+extension FocusedValues {
+    var preview: PreviewActions? {
+        get { self[PreviewActionsKey.self] }
+        set { self[PreviewActionsKey.self] = newValue }
+    }
+}
+
+/// The preview window's commands, in the menu bar. They live here rather than only on toolbar
+/// buttons so the shortcuts keep working when a button is in the toolbar's overflow menu or the
+/// toolbar is hidden. The overlay switches are app-wide settings, so they work from any window.
+struct PreviewCommands: Commands {
+    @AppStorage(HL.show) private var overlayOn = true
+    @AppStorage(HL.showBoxes) private var showBoxes = true
+    @AppStorage(HL.showText) private var showText = true
+    @FocusedValue(\.preview) private var preview
+
+    var body: some Commands {
+        CommandGroup(after: .saveItem) {
+            Button("Export as PNG…") { preview?.export() }
+                .keyboardShortcut("s").disabled(preview == nil)
+            Button("Reveal in Finder") { preview?.reveal() }.disabled(preview == nil)
+        }
+        CommandGroup(after: .toolbar) {
+            Toggle("Show Overlay", isOn: $overlayOn).keyboardShortcut("o", modifiers: [.command, .shift])
+            Toggle("Show Boxes", isOn: $showBoxes).disabled(!overlayOn)
+            Toggle("Show Text", isOn: $showText).disabled(!overlayOn)
+            Divider()
+            Button("Zoom In") { preview?.zoomIn() }
+                .keyboardShortcut("+").disabled(!(preview?.canZoomIn ?? false))
+            Button("Zoom Out") { preview?.zoomOut() }
+                .keyboardShortcut("-").disabled(!(preview?.canZoomOut ?? false))
+            Button("Actual Size") { preview?.actualSize() }
+                .keyboardShortcut("0").disabled(preview == nil)
+            Button("Zoom to Fit") { preview?.zoomToFit() }
+                .keyboardShortcut("9").disabled(preview == nil)
+            Divider()
+            Button(preview?.inspectorShown == true ? "Hide Style Inspector" : "Show Style Inspector") {
+                preview?.toggleInspector()
+            }
+            .keyboardShortcut("i", modifiers: [.command, .option]).disabled(preview == nil)
+            Button("Recalculate Overlay") { preview?.recalculate() }
+                .keyboardShortcut("r").disabled(!(preview?.canRecalculate ?? false))
+        }
+        CommandMenu("Go") {
+            Button("Previous Image") { preview?.previous() }
+                .keyboardShortcut("[").disabled(!(preview?.hasPrevious ?? false))
+            Button("Next Image") { preview?.next() }
+                .keyboardShortcut("]").disabled(!(preview?.hasNext ?? false))
+            Divider()
+            Button("Previous Match") { preview?.previousMatch() }
+                .keyboardShortcut("[", modifiers: [.command, .option]).disabled(!(preview?.hasMatches ?? false))
+            Button("Next Match") { preview?.nextMatch() }
+                .keyboardShortcut("]", modifiers: [.command, .option]).disabled(!(preview?.hasMatches ?? false))
+        }
+    }
+}
+
 @main
 struct OCRSearchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
         WindowGroup("Miro-ocr-search") { ContentView().frame(minWidth: 760, minHeight: 520) }
-            .commands { WatermarkCommands() }
+            .commands { WatermarkCommands(); PreviewCommands() }
         // Full-size viewer: one window per image, closable with the red button, Cmd+W or Esc.
         WindowGroup("Preview", id: "preview", for: PreviewRequest.self) { $req in
             if let req { PreviewView(allPaths: req.allPaths, startIndex: req.startIndex, query: req.query, searchMode: req.mode) }
@@ -572,12 +647,13 @@ struct PreviewView: View {
     @State private var imageScale: CGFloat = 1
     /// App-wide watermark switch; see Watermark. Held here so the preview redraws when it changes.
     @AppStorage(Watermark.key) private var watermarkOn = true
-    /// Whether the overlay is drawn, and as boxes or as text. App-wide rather than per image:
+    /// Whether the overlay is drawn, and whether it has boxes, text or both. App-wide rather than per image:
     /// these are how you are looking at whatever is open, not facts about one screenshot, and
     /// having them follow each image meant paging through results kept changing the view out from
     /// under you. The rest of the style stays per image — see OverlayStyle.
     @AppStorage(HL.show) private var overlayOn = true
-    @AppStorage(HL.mode) private var overlayMode = "box"
+    @AppStorage(HL.showBoxes) private var showBoxes = true
+    @AppStorage(HL.showText) private var showText = true
     /// Fitted font size per match, computed once at the image's native pixel scale rather than
     /// on demand — fitting takes several font-metric lookups, and computing it live inside
     /// MatchView/MatchInfoPopup's body meant it re-ran on every mouse-move while hovering *any*
@@ -597,7 +673,14 @@ struct PreviewView: View {
     @State private var failed = false
     @State private var hoverIndex: Int?
     @State private var hoverPoint: CGPoint = .zero
-    @State private var showStylePopover = false
+    /// The style panel on the right of the window. A side panel rather than a popover so the
+    /// image stays in view, and clickable, while the style is being adjusted.
+    @State private var showInspector = false
+    /// Zoom when a pinch began, so the gesture scales from where it started.
+    @State private var pinchBase: CGFloat?
+    /// Whether hoverIndex was set from the keyboard (Go ▸ Next Match) rather than the mouse, in
+    /// which case the hover card is placed at the match instead of at the cursor.
+    @State private var keyboardMatch = false
     /// Mirrors the GeometryReader's `scale` (display points per native image pixel) outside of
     /// it, so the toolbar's Size field — which lives in .toolbar, with no access to that
     /// GeometryReader — can show and set a size in the same on-screen points the user actually
@@ -620,234 +703,197 @@ struct PreviewView: View {
         let box = Color(hex: style.boxHex) ?? .yellow
         let txt = Color(hex: style.textHex) ?? .black
         let bg = Color(hex: style.bgHex) ?? .white
-        let boxBinding = Binding<Color>(get: { box }, set: { style.boxHex = $0.hexString })
-        let txtBinding = Binding<Color>(get: { txt }, set: { style.textHex = $0.hexString })
-        VStack(spacing: 0) {
-            Group {
-                if let image {
-                    // Fit until the user zooms, then a fixed scale inside a scroll view. The overlay
-                    // layer is a single image scaled alongside the photo, so zooming costs nothing
-                    // beyond the resample — nothing is re-laid-out or redrawn.
-                    GeometryReader { outer in
-                        let fit = pixelSize.width > 0 && pixelSize.height > 0
-                            ? min(outer.size.width / pixelSize.width, outer.size.height / pixelSize.height)
-                            : 1
-                        let z = zoom ?? fit
-                        let drawn = CGSize(width: max(pixelSize.width * z, 1), height: max(pixelSize.height * z, 1))
-                        ScrollView([.horizontal, .vertical]) {
-                            Image(nsImage: image).resizable()
-                                .frame(width: drawn.width, height: drawn.height)
-                                .overlay(GeometryReader { geo in
-                                    // Fitted sizes are cached at the image's native pixel scale (fontSizes);
-                                    // this is the cheap per-frame conversion to on-screen points.
-                                    let scale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1
-                                    ZStack(alignment: .topLeading) {
-                                        if overlayOn, let overlayLayer {
-                                            Image(nsImage: overlayLayer).resizable()
-                                                .frame(width: geo.size.width, height: geo.size.height)
-                                                .allowsHitTesting(false)
-                                        }
-                                        // Invisible, and only for hit testing: the overlay itself is one
-                                        // image now, so each match still needs its own target for the hover
-                                        // card to know which one the cursor is over.
-                                        //
-                                        // The target is the glyphs themselves — the ink measured off the
-                                        // image — not Vision's box and not the padded patch drawn over it.
-                                        // Those are both bigger than the words, so the card used to appear
-                                        // while the cursor was still in the margin, and on a line of
-                                        // several matches the inflated areas reached into each other.
-                                        ForEach(Array((overlayOn ? matches : []).enumerated()), id: \.offset) { i, m in
-                                            let target = hoverTarget(i)
-                                            Color.clear.contentShape(Rectangle())
-                                                .frame(width: target.width * geo.size.width,
-                                                       height: target.height * geo.size.height)
-                                                .position(x: target.midX * geo.size.width,
-                                                          y: (1 - target.midY) * geo.size.height)
-                                                .onContinuousHover(coordinateSpace: .named("preview")) { phase in
-                                                    switch phase {
-                                                    case .active(let p): hoverIndex = i; hoverPoint = p
-                                                    case .ended: if hoverIndex == i { hoverIndex = nil }
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                Group {
+                    if let image {
+                        // Fit until the user zooms, then a fixed scale inside a scroll view. The overlay
+                        // layer is a single image scaled alongside the photo, so zooming costs nothing
+                        // beyond the resample — nothing is re-laid-out or redrawn.
+                        GeometryReader { outer in
+                            let fit = pixelSize.width > 0 && pixelSize.height > 0
+                                ? min(outer.size.width / pixelSize.width, outer.size.height / pixelSize.height)
+                                : 1
+                            let z = zoom ?? fit
+                            let drawn = CGSize(width: max(pixelSize.width * z, 1), height: max(pixelSize.height * z, 1))
+                            ScrollView([.horizontal, .vertical]) {
+                                Image(nsImage: image).resizable()
+                                    .frame(width: drawn.width, height: drawn.height)
+                                    .overlay(GeometryReader { geo in
+                                        // Fitted sizes are cached at the image's native pixel scale (fontSizes);
+                                        // this is the cheap per-frame conversion to on-screen points.
+                                        let scale = pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1
+                                        ZStack(alignment: .topLeading) {
+                                            if overlayOn, let overlayLayer {
+                                                Image(nsImage: overlayLayer).resizable()
+                                                    .frame(width: geo.size.width, height: geo.size.height)
+                                                    .allowsHitTesting(false)
+                                            }
+                                            // Invisible, and only for hit testing: the overlay itself is one
+                                            // image now, so each match still needs its own target for the hover
+                                            // card to know which one the cursor is over.
+                                            //
+                                            // The target is the glyphs themselves — the ink measured off the
+                                            // image — not Vision's box and not the padded patch drawn over it.
+                                            // Those are both bigger than the words, so the card used to appear
+                                            // while the cursor was still in the margin, and on a line of
+                                            // several matches the inflated areas reached into each other.
+                                            ForEach(Array((overlayOn ? matches : []).enumerated()), id: \.offset) { i, m in
+                                                let target = hoverTarget(i)
+                                                Color.clear.contentShape(Rectangle())
+                                                    .frame(width: target.width * geo.size.width,
+                                                           height: target.height * geo.size.height)
+                                                    .position(x: target.midX * geo.size.width,
+                                                              y: (1 - target.midY) * geo.size.height)
+                                                    .onContinuousHover(coordinateSpace: .named("preview")) { phase in
+                                                        switch phase {
+                                                        case .active(let p): hoverIndex = i; hoverPoint = p; keyboardMatch = false
+                                                        case .ended: if hoverIndex == i { hoverIndex = nil }
+                                                        }
                                                     }
+                                            }
+                                            if let i = hoverIndex, matches.indices.contains(i) {
+                                                let m = matches[i]
+                                                let target = hoverTarget(i)
+                                                let mf = matchedFonts.indices.contains(i) ? matchedFonts[i] : nil
+                                                MatchInfoPopup(text: m.text, showBoxes: showBoxes, showText: showText,
+                                                               index: i + 1, total: matches.count,
+                                                               boxSize: CGSize(width: target.width * pixelSize.width,
+                                                                               height: target.height * pixelSize.height),
+                                                               fontSize: imageFontSize(i),
+                                                               design: style.design, weight: style.weight,
+                                                               boxColor: box,
+                                                               textColor: (style.autoTextColor ? inkSamples[safe: i] ?? nil : nil)?.color ?? txt,
+                                                               bgColor: (style.autoBg ? (bgColors.indices.contains(i) ? bgColors[i] : nil) : nil) ?? bg,
+                                                               opacity: style.opacity, matchedFont: mf,
+                                                               fontIsManual: !style.manualFont.isEmpty)
+                                                    .allowsHitTesting(false)   // never steals hover from the match it describes
+                                                    .position(x: min(cardAnchor(i, in: geo.size).x + 110, geo.size.width - 100),
+                                                              y: min(cardAnchor(i, in: geo.size).y + 70, geo.size.height - 60))
+                                            }
+                                            // Follows the overlay toggle: turning the overlay off shows the
+                                            // image as it is, and a watermark left behind would contradict
+                                            // that. Sized and placed in the image's own pixels and then
+                                            // scaled to the window, so the preview shows the badge at the
+                                            // same size relative to the image that an export writes --
+                                            // see watermarkPixelSize.
+                                            let ww = watermarkPixelSize.width * scale
+                                            let wh = watermarkPixelSize.height * scale
+                                            // Both have to agree: the menu switch decides whether the
+                                            // badge exists at all, and the overlay toggle decides
+                                            // whether you are looking at a marked-up image or the
+                                            // plain one. Off in the menu means off regardless.
+                                            if watermarkOn, overlayOn {
+                                            ZStack {
+                                                Rectangle().fill(watermarkBackground)
+                                                if let watermarkWordmark {
+                                                    Image(nsImage: watermarkWordmark).resizable().scaledToFit()
+                                                        .frame(width: ww * watermarkWordmarkWidthFraction)
                                                 }
-                                        }
-                                        if let i = hoverIndex, matches.indices.contains(i) {
-                                            let m = matches[i]
-                                            let target = hoverTarget(i)
-                                            let mf = matchedFonts.indices.contains(i) ? matchedFonts[i] : nil
-                                            MatchInfoPopup(text: m.text, mode: overlayMode,
-                                                           index: i + 1, total: matches.count,
-                                                           boxSize: CGSize(width: target.width * pixelSize.width,
-                                                                           height: target.height * pixelSize.height),
-                                                           fontSize: imageFontSize(i),
-                                                           design: style.design, weight: style.weight,
-                                                           boxColor: box,
-                                                           textColor: (style.autoTextColor ? inkSamples[safe: i] ?? nil : nil)?.color ?? txt,
-                                                           bgColor: (style.autoBg ? (bgColors.indices.contains(i) ? bgColors[i] : nil) : nil) ?? bg,
-                                                           opacity: style.opacity, matchedFont: mf,
-                                                           fontIsManual: !style.manualFont.isEmpty)
-                                                .allowsHitTesting(false)   // never steals hover from the match it describes
-                                                .position(x: min(hoverPoint.x + 110, geo.size.width - 100),
-                                                          y: min(hoverPoint.y + 70, geo.size.height - 60))
-                                        }
-                                        // Follows the overlay toggle: turning the overlay off shows the
-                                        // image as it is, and a watermark left behind would contradict
-                                        // that. Sized and placed in the image's own pixels and then
-                                        // scaled to the window, so the preview shows the badge at the
-                                        // same size relative to the image that an export writes --
-                                        // see watermarkPixelSize.
-                                        let ww = watermarkPixelSize.width * scale
-                                        let wh = watermarkPixelSize.height * scale
-                                        // Both have to agree: the menu switch decides whether the
-                                        // badge exists at all, and the overlay toggle decides
-                                        // whether you are looking at a marked-up image or the
-                                        // plain one. Off in the menu means off regardless.
-                                        if watermarkOn, overlayOn {
-                                        ZStack {
-                                            Rectangle().fill(watermarkBackground)
-                                            if let watermarkWordmark {
-                                                Image(nsImage: watermarkWordmark).resizable().scaledToFit()
-                                                    .frame(width: ww * watermarkWordmarkWidthFraction)
+                                            }
+                                            .frame(width: ww, height: wh)
+                                            .opacity(watermarkOpacity)
+                                            .allowsHitTesting(false)
+                                            .position(x: geo.size.width - watermarkRightMargin * scale - ww / 2,
+                                                      y: geo.size.height - watermarkBottomMargin * scale - wh / 2)
                                             }
                                         }
-                                        .frame(width: ww, height: wh)
-                                        .opacity(watermarkOpacity)
-                                        .allowsHitTesting(false)
-                                        .position(x: geo.size.width - watermarkRightMargin * scale - ww / 2,
-                                                  y: geo.size.height - watermarkBottomMargin * scale - wh / 2)
-                                        }
-                                    }
-                                    .coordinateSpace(name: "preview")
-                                    .onAppear { setDisplayScale(scale) }
-                                    .onChange(of: geo.size) { _ in setDisplayScale(pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1) }
-                                    .onChange(of: pixelSize) { _ in setDisplayScale(pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1) }
-                                })
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .padding(12)
+                                        .coordinateSpace(name: "preview")
+                                        .onAppear { setDisplayScale(scale) }
+                                        .onChange(of: geo.size) { _ in setDisplayScale(pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1) }
+                                        .onChange(of: pixelSize) { _ in setDisplayScale(pixelSize.width > 0 ? geo.size.width / pixelSize.width : 1) }
+                                    })
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .padding(12)
+                            }
+                            // Centres the image while it is smaller than the window, which is most of the
+                            // time at fit scale, instead of pinning it to the top-left.
+                            .frame(width: outer.size.width, height: outer.size.height)
+                            .simultaneousGesture(MagnificationGesture()
+                                .onChanged { v in
+                                    let base = pinchBase ?? (zoom ?? displayScale)
+                                    pinchBase = base
+                                    zoom = min(max(base * v, Self.zoomRange.lowerBound), Self.zoomRange.upperBound)
+                                }
+                                .onEnded { _ in pinchBase = nil })
+                            .onChange(of: fit) { f in if zoom == nil { setDisplayScale(f) } }
                         }
-                        // Centres the image while it is smaller than the window, which is most of the
-                        // time at fit scale, instead of pinning it to the top-left.
-                        .frame(width: outer.size.width, height: outer.size.height)
-                        .onChange(of: fit) { f in if zoom == nil { setDisplayScale(f) } }
                     }
+                    else if failed { Text("Can't open \(path)").foregroundStyle(.secondary) }
+                    else { ProgressView() }
                 }
-                else if failed { Text("Can't open \(path)").foregroundStyle(.secondary) }
-                else { ProgressView() }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Divider()
+                imageInfoBar
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider()
-            imageInfoBar
+            .frame(minWidth: 400, minHeight: 400)
+            if showInspector {
+                Divider()
+                ScrollView { inspectorPanel.padding(14) }
+                    .frame(width: 320)
+            }
         }
-        .frame(minWidth: 400, minHeight: 400)
+        // Standard title-bar document icon: Cmd-click it for the folder path, drag it to use the file.
+        .navigationDocument(URL(fileURLWithPath: path))
+        .focusedSceneValue(\.preview, previewActions)
+        // ⌘= as well as ⌘+ for Zoom In, as in most Mac apps; the menu item can only show one.
+        .background(Button("", action: zoomIn).keyboardShortcut("=").opacity(0).allowsHitTesting(false))
         .navigationTitle((path as NSString).lastPathComponent)
         .toolbar {
-            if allPaths.count > 1 {
-                Button { index -= 1 } label: { Image(systemName: "chevron.left") }
-                    .disabled(index <= 0).help("Previous result (⌘[)").accessibilityLabel("Previous result")
-                    .keyboardShortcut("[", modifiers: .command)
-                Text("\(index + 1) of \(allPaths.count)").foregroundStyle(.secondary).monospacedDigit()
-                Button { index += 1 } label: { Image(systemName: "chevron.right") }
-                    .disabled(index >= allPaths.count - 1).help("Next result (⌘])").accessibilityLabel("Next result")
-                    .keyboardShortcut("]", modifiers: .command)
-                Divider()
-            }
-            // Zoom sits with the other view controls, left of everything that changes how the
-            // overlay is drawn, since it changes only how the image is displayed.
-            Button(action: zoomOut) { Image(systemName: "minus.magnifyingglass") }
-                .help("Zoom out (⌘−)").accessibilityLabel("Zoom out")
-                .keyboardShortcut("-", modifiers: .command)
-                .disabled(displayScale <= Self.zoomRange.lowerBound)
-            Menu {
-                Button("Fit to Window") { zoom = nil }.keyboardShortcut("0", modifiers: .command)
-                Button("Actual Size") { zoom = 1 }.keyboardShortcut("1", modifiers: .command)
-                Divider()
-                ForEach([0.25, 0.5, 1.0, 2.0, 4.0], id: \.self) { z in
-                    Button("\(Int(z * 100))%") { zoom = CGFloat(z) }
+            // Back/forward sit on the left, next to the title, as in Preview and Photos.
+            ToolbarItemGroup(placement: .navigation) {
+                if allPaths.count > 1 {
+                    Button { goPrevious() } label: { Image(systemName: "chevron.left") }
+                        .disabled(index <= 0).help("Previous image (⌘[)").accessibilityLabel("Previous image")
+                    Text("\(index + 1) of \(allPaths.count)").foregroundStyle(.secondary).monospacedDigit()
+                    Button { goNext() } label: { Image(systemName: "chevron.right") }
+                        .disabled(index >= allPaths.count - 1).help("Next image (⌘])").accessibilityLabel("Next image")
                 }
-            } label: {
-                Text(zoom == nil ? "Fit" : "\(Int((displayScale * 100).rounded()))%")
-                    .monospacedDigit().frame(minWidth: 40)
             }
-            .menuStyle(.borderlessButton).fixedSize()
-            .help("Zoom level")
-            Button(action: zoomIn) { Image(systemName: "plus.magnifyingglass") }
-                .help("Zoom in (⌘+)").accessibilityLabel("Zoom in")
-                .keyboardShortcut("+", modifiers: .command)
-                .disabled(displayScale >= Self.zoomRange.upperBound)
-            Divider()
-
-            Text(scanning ? "Finding matches…" : (searchTerms(query, mode: searchMode).isEmpty ? "" : (overlayOn ? plural(matches.count, "match") : "overlay off")))
-                .foregroundStyle(.secondary)
-            Toggle("Overlay", isOn: $overlayOn)
-                .toggleStyle(.switch).help("Show or hide the overlay (Cmd+Shift+O)")
-                .keyboardShortcut("o", modifiers: [.command, .shift])
-            Picker("Show as", selection: $overlayMode) {
-                Text("Boxes").tag("box"); Text("Text").tag("text")
-            }.pickerStyle(.segmented).disabled(!overlayOn)
-            // All the fine-grained style controls live behind one button instead of each being
-            // its own toolbar item — with Font/Background/Auto/Auto font all inline, this bar
-            // overflowed past a handful of items and the rest silently landed in the hidden
-            // ">>" menu, which is why the Background picker (and friends) seemed to vanish.
-            Button(action: refresh) { Image(systemName: "arrow.clockwise") }
-                .help("Recalculate this image: re-read it, match the font, colours and sizes again, and drop any manual overrides (⌘R)")
-                .accessibilityLabel("Recalculate")
-                .keyboardShortcut("r", modifiers: .command)
-                .disabled(scanning)
-            Button { showStylePopover = true } label: { Image(systemName: "paintpalette") }
-                .help("Overlay style").accessibilityLabel("Overlay style")
-                .popover(isPresented: $showStylePopover, arrowEdge: .bottom) {
-                    let bgBinding = Binding<Color>(get: { bg }, set: { style.bgHex = $0.hexString })
-                    // Grouped into labelled sections rather than one flat stack of controls —
-                    // it had grown to two color pickers, three auto-match toggles and a whole
-                    // font row with no hierarchy to read it by.
-                    VStack(alignment: .leading, spacing: 14) {
-                        if overlayMode == "text" {
-                            VStack(alignment: .leading, spacing: 8) {
-                                sectionHeader("Color")
-                                HStack {
-                                    ColorPicker("Text", selection: txtBinding, supportsOpacity: false)
-                                    ColorPicker("Background", selection: bgBinding, supportsOpacity: false)
-                                }
-                                Toggle("Match text color from image", isOn: $style.autoTextColor)
-                                    .help("Pick up the text's own ink color from the image and use it for the redrawn word; the Text color above is the fallback")
-                                Toggle("Match background from image", isOn: $style.autoBg)
-                                    .help("Pick up the color immediately around each match and use it as its background; the Background color above is the fallback")
-                            }
-                            Divider()
-                            fontSection
-                            Divider()
-                            VStack(alignment: .leading, spacing: 8) {
-                                sectionHeader("Preview")
-                                stylePreview(box: box, text: txt, background: bg)
-                            }
-                            imageScopeFooter
-                        } else {
-                            VStack(alignment: .leading, spacing: 8) {
-                                sectionHeader("Box")
-                                ColorPicker("Color", selection: boxBinding, supportsOpacity: false)
-                                HStack {
-                                    Text("Fill")
-                                    Slider(value: $style.opacity, in: 0...0.8)
-                                    Text("\(Int(style.opacity * 100))%").monospacedDigit().frame(width: 38, alignment: .trailing)
-                                }
-                                Toggle("Outline", isOn: $style.outline)
-                            }
-                            imageScopeFooter
-                            Divider()
-                            VStack(alignment: .leading, spacing: 8) {
-                                sectionHeader("Preview")
-                                stylePreview(box: box, text: txt, background: bg)
-                            }
-                        }
+            // Shortcuts for everything here are on the menu bar commands (PreviewCommands), not on
+            // these buttons, so they keep working when a button is in the overflow menu.
+            ToolbarItemGroup {
+                Button(action: zoomOut) { Image(systemName: "minus.magnifyingglass") }
+                    .help("Zoom out (⌘−)").accessibilityLabel("Zoom out")
+                    .disabled(displayScale <= Self.zoomRange.lowerBound)
+                Menu {
+                    Button("Actual Size (⌘0)") { zoom = 1 }
+                    Button("Zoom to Fit (⌘9)") { zoom = nil }
+                    Divider()
+                    ForEach([0.25, 0.5, 1.0, 2.0, 4.0], id: \.self) { z in
+                        Button("\(Int(z * 100))%") { zoom = CGFloat(z) }
                     }
-                    .padding(14).frame(width: 300)
+                } label: {
+                    Text(zoom == nil ? "Fit" : "\(Int((displayScale * 100).rounded()))%")
+                        .monospacedDigit().frame(minWidth: 40)
                 }
-            Button(action: saveImage) { Label("Save Image…", systemImage: "square.and.arrow.down") }
-                .keyboardShortcut("s")
-                .help("Write this image, with its overlays and watermark, to a PNG file")
-            Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) } label: {
-                Label("Reveal in Finder", systemImage: "folder")
+                .menuStyle(.borderlessButton).fixedSize()
+                .help("Zoom level")
+                Button(action: zoomIn) { Image(systemName: "plus.magnifyingglass") }
+                    .help("Zoom in (⌘+)").accessibilityLabel("Zoom in")
+                    .disabled(displayScale >= Self.zoomRange.upperBound)
             }
-            Button { NSApp.keyWindow?.close() } label: { Label("Close", systemImage: "xmark.circle") }
+            ToolbarItemGroup {
+                // One control for the overlay: click to show or hide it, open the menu for which
+                // parts are drawn.
+                Menu {
+                    Toggle("Show Overlay", isOn: $overlayOn)
+                    Divider()
+                    Toggle("Boxes", isOn: $showBoxes).disabled(!overlayOn)
+                    Toggle("Text", isOn: $showText).disabled(!overlayOn)
+                } label: {
+                    Label("Overlay", systemImage: overlayOn ? "text.viewfinder" : "viewfinder")
+                } primaryAction: {
+                    overlayOn.toggle()
+                }
+                .help(overlayOn ? "Hide the overlay (⇧⌘O). Use the arrow for Boxes and Text."
+                                : "Show the overlay (⇧⌘O). Use the arrow for Boxes and Text.")
+                .accessibilityLabel("Overlay")
+                Toggle(isOn: $showInspector) { Label("Style", systemImage: "paintpalette") }
+                    .help("Show or hide the overlay style panel (⌥⌘I)").accessibilityLabel("Style")
+                Button(action: saveImage) { Label("Export as PNG…", systemImage: "square.and.arrow.down") }
+                    .help("Write this image, with its overlays and watermark, to a PNG file (⌘S)")
+            }
         }
         .onExitCommand { NSApp.keyWindow?.close() }
         .task(id: "\(path)#\(reloadToken)") {
@@ -875,7 +921,7 @@ struct PreviewView: View {
             // Detected whenever text is being drawn, not only while matching is on: the font
             // menu shows "Auto (X)" as the alternative to whatever is picked, and that label is
             // only honest if X has actually been worked out.
-            if overlayMode == "text" { await detectFonts() }
+            if showText { await detectFonts() }
             await recomputeFontSizes()
             recomputeRenderedFontNames()
             rebuildOverlay()
@@ -900,9 +946,10 @@ struct PreviewView: View {
         .onChange(of: style.design) { _ in Task { await recomputeFontSizes(); rebuildOverlay() } }
         .onChange(of: style.weight) { _ in Task { await recomputeFontSizes(); recomputeRenderedFontNames(); rebuildOverlay() } }
         .onChange(of: overlayOn) { _ in rebuildOverlay() }
-        .onChange(of: overlayMode) { _ in
+        .onChange(of: showBoxes) { _ in rebuildOverlay() }
+        .onChange(of: showText) { _ in
             Task {
-                if overlayMode == "text", detectedFontName == nil { await detectFonts() }
+                if showText, detectedFontName == nil { await detectFonts() }
                 await recomputeFontSizes()
                 recomputeRenderedFontNames()
                 rebuildOverlay()
@@ -916,26 +963,129 @@ struct PreviewView: View {
         }
     }
 
-    /// Spells out that these controls affect this image only, and offers the two ways out of
-    /// that: back to the defaults, or make this image's look the new default.
+    /// The style panel: text colours and font when Text is on, box look when Boxes is on, then
+    /// one Reset menu and the note that all of it applies to this image only.
+    private var inspectorPanel: some View {
+        let box = Color(hex: style.boxHex) ?? .yellow
+        let txt = Color(hex: style.textHex) ?? .black
+        let bg = Color(hex: style.bgHex) ?? .white
+        let boxBinding = Binding<Color>(get: { box }, set: { style.boxHex = $0.hexString })
+        let txtBinding = Binding<Color>(get: { txt }, set: { style.textHex = $0.hexString })
+        let bgBinding = Binding<Color>(get: { bg }, set: { style.bgHex = $0.hexString })
+        return VStack(alignment: .leading, spacing: 14) {
+            if showText {
+                // Each "match from image" switch comes before the colour it overrides. While it
+                // is on, the colour is only used where sampling fails, and says so.
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionHeader("Color")
+                    Toggle("Match text color from image", isOn: $style.autoTextColor)
+                        .help("Pick up the text's own ink color from the image and use it for the redrawn word")
+                    ColorPicker(style.autoTextColor ? "Fallback text color" : "Text color",
+                                selection: txtBinding, supportsOpacity: false)
+                    Toggle("Match background from image", isOn: $style.autoBg)
+                        .help("Pick up the color immediately around each match and use it as its background")
+                    ColorPicker(style.autoBg ? "Fallback background" : "Background",
+                                selection: bgBinding, supportsOpacity: false)
+                }
+                Divider()
+                fontSection
+                Divider()
+            }
+            if showBoxes {
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionHeader("Box")
+                    ColorPicker("Color", selection: boxBinding, supportsOpacity: false)
+                    HStack {
+                        Text("Fill opacity")
+                        Slider(value: $style.opacity, in: 0...0.8)
+                        Text("\(Int(style.opacity * 100))%").monospacedDigit().frame(width: 38, alignment: .trailing)
+                    }
+                    Toggle("Outline", isOn: $style.outline)
+                }
+                Divider()
+            }
+            if !overlayOn || (!showText && !showBoxes) {
+                Text(overlayOn ? "Boxes and Text are both off. Turn one on from the Overlay menu to style it."
+                               : "The overlay is off. Turn it on from the Overlay button to style it.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Divider()
+            }
+            imageScopeFooter
+        }
+    }
+
+    /// Whether any font setting differs from automatic — what "Font to Automatic" would undo.
+    private var fontOverridden: Bool {
+        !style.manualFont.isEmpty || style.manualSize > 0 || style.manualTracking != nil
+            || style.manualSmoothness != nil || !style.kerning || style.weight == "bold" || style.italic
+    }
+
+    /// Says that these controls affect this image only, and holds the ways out of that: the one
+    /// Reset menu (font only, this image, or a full recalculation) and making this look the default.
     private var imageScopeFooter: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Divider()
+        VStack(alignment: .leading, spacing: 8) {
             Text("These settings apply to \((path as NSString).lastPathComponent) only.")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button("Reset to defaults") {
-                    OverlayStyle.clear(path)
-                    style = OverlayStyle.current()
+                Menu("Reset") {
+                    Button("Font to Automatic") {
+                        style.manualFont = ""; style.autoFont = true
+                        style.manualSize = 0; style.manualTracking = nil; style.manualSmoothness = nil
+                        style.kerning = true
+                        style.weight = "regular"; style.italic = false
+                    }
+                    .disabled(!fontOverridden)
+                    Button("This Image to Defaults") {
+                        OverlayStyle.clear(path)
+                        style = OverlayStyle.current()
+                    }
+                    Divider()
+                    Button("Recalculate Everything (⌘R)", action: refresh).disabled(scanning)
                 }
-                .font(.caption).buttonStyle(.link)
-                .help("Forget this image's settings and go back to the defaults from Settings")
+                .menuStyle(.borderlessButton).fixedSize()
+                .help("Font to Automatic: auto font, size, spacing and smoothness, regular, no italic. This Image to Defaults: the look from Settings. Recalculate: re-read the image and match everything again.")
                 Spacer()
-                Button("Save as default") { style.saveAsDefaults() }
-                    .font(.caption).buttonStyle(.link)
+                Button("Save as Default") { style.saveAsDefaults() }
                     .help("Use this look as the starting point for images that have no settings of their own")
             }
         }
+    }
+
+    /// The menu-bar commands' view of this window; see PreviewCommands.
+    private var previewActions: PreviewActions {
+        PreviewActions(
+            zoomIn: zoomIn, zoomOut: zoomOut,
+            actualSize: { zoom = 1 }, zoomToFit: { zoom = nil },
+            canZoomIn: displayScale < Self.zoomRange.upperBound,
+            canZoomOut: displayScale > Self.zoomRange.lowerBound,
+            previous: goPrevious, next: goNext,
+            hasPrevious: index > 0, hasNext: index < allPaths.count - 1,
+            previousMatch: { stepMatch(-1) }, nextMatch: { stepMatch(1) },
+            hasMatches: overlayOn && !matches.isEmpty,
+            recalculate: refresh, canRecalculate: !scanning,
+            export: saveImage,
+            reveal: { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) },
+            toggleInspector: { showInspector.toggle() }, inspectorShown: showInspector)
+    }
+
+    private func goPrevious() { if index > 0 { index -= 1 } }
+    private func goNext() { if index < allPaths.count - 1 { index += 1 } }
+
+    /// Selects the next or previous match from the keyboard and shows its hover card, so the card
+    /// is not only reachable with the mouse.
+    private func stepMatch(_ delta: Int) {
+        guard !matches.isEmpty else { return }
+        let n = matches.count
+        hoverIndex = ((hoverIndex ?? (delta > 0 ? -1 : 0)) + delta + n) % n
+        keyboardMatch = true
+    }
+
+    /// Where the hover card for match `i` hangs from: the cursor, or the match's bottom-right
+    /// corner when it was selected from the keyboard.
+    private func cardAnchor(_ i: Int, in size: CGSize) -> CGPoint {
+        guard keyboardMatch else { return hoverPoint }
+        let t = hoverTarget(i)
+        return CGPoint(x: t.maxX * size.width, y: (1 - t.minY) * size.height)
     }
 
     private static let zoomStep: CGFloat = 1.25
@@ -961,13 +1111,14 @@ struct PreviewView: View {
     private func zoomIn()   { zoom = min((zoom ?? displayScale) * Self.zoomStep, Self.zoomRange.upperBound) }
     private func zoomOut()  { zoom = max((zoom ?? displayScale) / Self.zoomStep, Self.zoomRange.lowerBound) }
 
-    /// The image's own style, with the two app-wide choices — whether the overlay is on, and
-    /// boxes or text — put back on it, since the renderer takes one value describing the whole
+    /// The image's own style, with the app-wide choices — whether the overlay is on, and
+    /// boxes and text — put back on it, since the renderer takes one value describing the whole
     /// drawing rather than reaching for defaults itself.
     private var drawingStyle: OverlayStyle {
         var s = style
         s.show = overlayOn
-        s.mode = overlayMode
+        s.showBoxes = showBoxes
+        s.showText = showText
         return s
     }
 
@@ -1076,15 +1227,7 @@ struct PreviewView: View {
                                 if on { style.manualFont = "" }
                             }))
                             .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font). Picking a font below turns this off.")
-                        // Derived from manualSize rather than stored beside it: a second
-                        // flag could disagree with the number it describes, which is
-                        // exactly what went wrong with the font toggle.
-                        Toggle("Fit size to the text in the image", isOn: Binding(
-                            get: { style.manualSize == 0 },
-                            set: { on in style.manualSize = on ? 0 : autoSizeShown }))
-                            .help("Size each match to the glyphs measured on the image. Typing a size below turns this off.")
-                        HStack(spacing: 8) {
-                            Picker("", selection: Binding<String>(
+                        Picker("", selection: Binding<String>(
                                 get: { style.manualFont },
                                 // Picking a specific font is the opposite of matching one
                                 // from the image, so the toggle follows it; choosing
@@ -1098,13 +1241,30 @@ struct PreviewView: View {
                                 Divider()
                                 ForEach(candidateFontFamilies(), id: \.self) { Text($0).tag($0) }
                             }
-                            .labelsHidden().frame(width: 148)
-
+                            .labelsHidden().frame(maxWidth: .infinity)
+                        // Size, then Bold and Italic, on one row as in a text-editing toolbar.
+                        HStack(spacing: 6) {
+                            Text("Size").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)
                             TextField("", value: sizeBinding, format: .number)
-                                .textFieldStyle(.roundedBorder).frame(width: 38)
+                                .textFieldStyle(.roundedBorder).frame(width: 46)
                                 .multilineTextAlignment(.trailing)
                             Stepper("", value: sizeBinding, in: 1...400).labelsHidden()
                             Text("pt").font(.caption).foregroundStyle(.secondary)
+                            // Derived from manualSize rather than stored beside it: a second
+                            // flag could disagree with the number it describes, which is
+                            // exactly what went wrong with the font toggle.
+                            Toggle("Auto", isOn: Binding(
+                                get: { style.manualSize == 0 },
+                                set: { on in style.manualSize = on ? 0 : autoSizeShown }))
+                                .toggleStyle(.button).controlSize(.small)
+                                .help("Size each match to the glyphs measured on the image. Typing a size turns this off.")
+                            Spacer()
+                            Toggle(isOn: Binding(get: { style.weight == "bold" }, set: { style.weight = $0 ? "bold" : "regular" })) {
+                                Text("B").bold()
+                            }.toggleStyle(.button).help("Bold").accessibilityLabel("Bold")
+                            Toggle(isOn: $style.italic) {
+                                Text("I").italic()
+                            }.toggleStyle(.button).help("Italic").accessibilityLabel("Italic")
                         }
                         // Spacing, fitted to the width the original glyphs occupied. It is
                         // what makes a substituted font track the original across a word
@@ -1119,20 +1279,19 @@ struct PreviewView: View {
                                 style.manualTracking = typed
                             }
                         )
-                        Toggle("Fit spacing to the text in the image", isOn: Binding(
-                            get: { style.manualTracking == nil },
-                            set: { on in style.manualTracking = on ? nil : fittedTracking }))
-                            .help("Space the letters so the redrawn word spans the same width as the original. Typing a value below turns this off.")
                         HStack(spacing: 8) {
-                            Text("Spacing").font(.caption).foregroundStyle(.secondary)
+                            Text("Spacing").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)
                             TextField("", value: trackingBinding, format: .number)
                                 .textFieldStyle(.roundedBorder).frame(width: 46)
                                 .multilineTextAlignment(.trailing)
                             Stepper("", value: trackingBinding, in: -20...20, step: 0.1).labelsHidden()
                             Text("pt").font(.caption).foregroundStyle(.secondary)
+                            Toggle("Auto", isOn: Binding(
+                                get: { style.manualTracking == nil },
+                                set: { on in style.manualTracking = on ? nil : fittedTracking }))
+                                .toggleStyle(.button).controlSize(.small)
+                                .help("Space the letters so the redrawn word spans the same width as the original. Typing a value turns this off.")
                             Spacer()
-                            Toggle("Kerning", isOn: $style.kerning)
-                                .help("Use the font's own pair kerning. Off spaces every pair evenly.")
                         }
                         // Softness, matched to how soft the covered text's edges are. Text drawn
                         // fresh is crisper than text that has been through a screenshot's
@@ -1146,40 +1305,22 @@ struct PreviewView: View {
                                 style.manualSmoothness = max(typed, 0)
                             }
                         )
-                        Toggle("Fit smoothness to the text in the image", isOn: Binding(
-                            get: { style.manualSmoothness == nil },
-                            set: { on in style.manualSmoothness = on ? nil : fittedSmoothness }))
-                            .help("Soften the redrawn text to the same degree as the text it covers. Typing a value below turns this off.")
                         HStack(spacing: 8) {
-                            Text("Smoothness").font(.caption).foregroundStyle(.secondary)
+                            Text("Smoothness").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)
                             TextField("", value: smoothBinding, format: .number.precision(.fractionLength(0...2)))
                                 .textFieldStyle(.roundedBorder).frame(width: 46)
                                 .multilineTextAlignment(.trailing)
                             Stepper("", value: smoothBinding, in: 0...10, step: 0.05).labelsHidden()
                             Text("pt").font(.caption).foregroundStyle(.secondary)
+                            Toggle("Auto", isOn: Binding(
+                                get: { style.manualSmoothness == nil },
+                                set: { on in style.manualSmoothness = on ? nil : fittedSmoothness }))
+                                .toggleStyle(.button).controlSize(.small)
+                                .help("Soften the redrawn text to the same degree as the text it covers. Typing a value turns this off.")
                             Spacer()
                         }
-                        HStack(spacing: 6) {
-                            Toggle(isOn: Binding(get: { style.weight == "bold" }, set: { style.weight = $0 ? "bold" : "regular" })) {
-                                Text("B").bold()
-                            }.toggleStyle(.button).help("Bold").accessibilityLabel("Bold")
-                            Toggle(isOn: $style.italic) {
-                                Text("I").italic()
-                            }.toggleStyle(.button).help("Italic").accessibilityLabel("Italic")
-                            Spacer()
-                            if !style.manualFont.isEmpty || style.manualSize > 0
-                                || style.manualTracking != nil || style.manualSmoothness != nil || !style.kerning
-                                || style.weight == "bold" || style.italic {
-                                Button("Reset to auto") {
-                                    style.manualFont = ""; style.autoFont = true
-                                    style.manualSize = 0; style.manualTracking = nil
-                                    style.kerning = true
-                                    style.weight = "regular"; style.italic = false
-                                }
-                                .font(.caption).buttonStyle(.link)
-                                .help("Back to auto-matched font/size, regular style.weight, no style.italic")
-                            }
-                        }
+                        Toggle("Kerning", isOn: $style.kerning)
+                            .help("Use the font's own pair kerning. Off spaces every pair evenly.")
                     }
         }
     }
@@ -1189,6 +1330,16 @@ struct PreviewView: View {
     /// origin, like everything else that describes where a match is.
     private func hoverTarget(_ i: Int) -> CGRect {
         (inkSamples[safe: i] ?? nil)?.rect ?? (matches.indices.contains(i) ? matches[i].rect : .zero)
+    }
+
+    /// The match count, and why nothing is drawn when the overlay or both its parts are off.
+    private var matchStatus: String {
+        if scanning { return "Finding matches…" }
+        if searchTerms(query, mode: searchMode).isEmpty { return "" }
+        let count = plural(matches.count, "match")
+        if !overlayOn { return "\(count) · overlay off" }
+        if !showBoxes && !showText { return "\(count) · boxes and text off" }
+        return count
     }
 
     /// A quiet line under the image saying what it is and where it came from.
@@ -1212,6 +1363,9 @@ struct PreviewView: View {
                 .truncationMode(.middle).lineLimit(1)
                 .help(path)
             Spacer(minLength: 0)
+            // In the info bar rather than the toolbar: it is status, not a control, and its width
+            // changes while scanning, which in the toolbar shifted every item after it.
+            Text(matchStatus).lineLimit(1).fixedSize()
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -1226,32 +1380,6 @@ struct PreviewView: View {
         Text(title.uppercased())
             .font(.caption2).fontWeight(.semibold).kerning(0.5)
             .foregroundStyle(.secondary)
-    }
-
-    /// Live swatch at the foot of the style popover, drawn with exactly the settings above it.
-    /// Unlike the Settings window's generic preview it uses this image's real data — the hovered
-    /// (or first) match's text, its sampled colors and its auto-matched font — so the popover
-    /// shows what the change will actually look like here, without hunting for the match on the
-    /// page behind the popover.
-    private func stylePreview(box: Color, text textColor: Color, background: Color) -> some View {
-        let i = hoverIndex ?? 0
-        let sample = matches.indices.contains(i) ? matches[i].text : "Screen Active"
-        let size = CGSize(width: 190, height: 30)
-        return ZStack {
-            RoundedRectangle(cornerRadius: 6).fill(.gray.opacity(0.25))
-            MatchView(text: sample, size: size, mode: overlayMode,
-                      box: box, textColor: textColor, opacity: style.opacity, outline: style.outline,
-                      design: style.design, weight: style.weight,
-                      sampled: bgColors.indices.contains(i) ? bgColors[i] : nil, background: background,
-                      autoBackground: style.autoBg,
-                      matchedFont: matchedFonts.indices.contains(i) ? matchedFonts[i] : nil,
-                      // Image pixels clamped to the swatch, same reason as in Settings.
-                      fontSize: min(imageFontSize(i), size.height * 0.8),
-                      renderedFontName: renderedFontNames.indices.contains(i) ? renderedFontNames[i] : nil,
-                      sampledTextColor: inkSamples.indices.contains(i) ? inkSamples[i]?.color : nil,
-                      autoTextColor: style.autoTextColor, italic: style.italic)
-        }
-        .frame(maxWidth: .infinity).frame(height: 44)
     }
 
     /// Auto-matches the whole image's text to one closest-looking installed font at once (see

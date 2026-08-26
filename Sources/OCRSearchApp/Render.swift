@@ -10,7 +10,8 @@ import OCRSearchCore
 /// or from a batch export with no preview window open at all.
 struct OverlayStyle: Sendable, Codable, Equatable {
     var show = true
-    var mode = "box"
+    var showBoxes = true
+    var showText = true
     var boxHex = HL.defaultBox
     var opacity = 0.35
     var outline = true
@@ -36,6 +37,12 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     var manualSize: Double = 0
     var italic = false
 
+    /// Boxes and text are app-wide (see forImage), so they are left out of what an image saves.
+    private enum CodingKeys: String, CodingKey {
+        case show, boxHex, opacity, outline, textHex, autoTextColor, bgHex, autoBg, design, weight
+        case autoFont, manualFont, manualTracking, kerning, manualSmoothness, manualSize, italic
+    }
+
     // MARK: per image
     //
     // The look is stored per image, not once for the app. Every image is a different screenshot
@@ -58,7 +65,8 @@ struct OverlayStyle: Sendable, Codable, Equatable {
         // in favour of the current setting.
         let live = current(d)
         s.show = live.show
-        s.mode = live.mode
+        s.showBoxes = live.showBoxes
+        s.showText = live.showText
         return s
     }
 
@@ -82,7 +90,8 @@ struct OverlayStyle: Sendable, Codable, Equatable {
 
     /// Writes this look back as the defaults every image starts from.
     func saveAsDefaults(_ d: UserDefaults = .standard) {
-        d.set(show, forKey: HL.show); d.set(mode, forKey: HL.mode)
+        d.set(show, forKey: HL.show)
+        d.set(showBoxes, forKey: HL.showBoxes); d.set(showText, forKey: HL.showText)
         d.set(boxHex, forKey: HL.boxHex); d.set(opacity, forKey: HL.opacity)
         d.set(outline, forKey: HL.outline); d.set(textHex, forKey: HL.textHex)
         d.set(autoTextColor, forKey: HL.autoTextColor); d.set(bgHex, forKey: HL.bgHex)
@@ -105,7 +114,8 @@ struct OverlayStyle: Sendable, Codable, Equatable {
         }
         return OverlayStyle(
             show: bool(HL.show, true),
-            mode: d.string(forKey: HL.mode) ?? "box",
+            showBoxes: bool(HL.showBoxes, true),
+            showText: bool(HL.showText, true),
             boxHex: d.string(forKey: HL.boxHex) ?? HL.defaultBox,
             opacity: double(HL.opacity, 0.35),
             outline: bool(HL.outline, true),
@@ -177,8 +187,8 @@ struct RenderPlan: Sendable {
                               matchedFonts: [], fontSizes: [], trackings: [])
         }
         let rects = matches.map(\.rect)
-        let bg = style.mode == "text" ? sampledBackgroundColors(at: path, rects: rects) : []
-        let ink = style.mode == "text" ? sampledInk(at: path, rects: rects) : []
+        let bg = style.showText ? sampledBackgroundColors(at: path, rects: rects) : []
+        let ink = style.showText ? sampledInk(at: path, rects: rects) : []
 
         var family: String? = style.manualFont.isEmpty ? nil : style.manualFont
         if style.autoFont, family == nil {
@@ -256,7 +266,7 @@ func renderExportPNG(path: String, query: String, searchMode: SearchMode,
     return NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:])
 }
 
-/// Draws every match's overlay — box, or replacement text over a patch — onto `ctx`, whose canvas
+/// Draws every match's overlay — replacement text over a patch, a box, or both — onto `ctx`, whose canvas
 /// is `canvas` pixels for an image whose native size is `plan.pixelSize`.
 ///
 /// Shared by the export and by the preview window, which shows the result of this as a single
@@ -284,7 +294,8 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
         let pad = boxRect.height * matchBoxPaddingFraction
         let padded = boxRect.insetBy(dx: -pad / 2, dy: -pad / 2)
 
-        if style.mode == "text" {
+        // Text first, then the box: with both on, the box highlights the redrawn word.
+        if style.showText {
             let fill = (style.autoBg ? plan.bgColors[safe: i] ?? nil : nil)
                 .map(cgColor) ?? cgColor(hex: style.bgHex, fallback: .white)
             // Snapped to whole pixels: the patch is a flat rectangle whose only job is to cover
@@ -309,7 +320,8 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
             drawMatchText(m.text, ink: inkRect, box: boxRect, size: size, color: inkColor,
                           family: plan.matchedFonts[safe: i] ?? nil, tracking: tracking,
                           blur: blur, style: style, ctx: ctx)
-        } else {
+        }
+        if style.showBoxes {
             let box = cgColor(hex: style.boxHex, fallback: .systemYellow)
             ctx.setFillColor(box.copy(alpha: CGFloat(style.opacity)) ?? box)
             ctx.fill(padded)

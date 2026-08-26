@@ -18,7 +18,8 @@ extension Color {
 /// Persisted highlight look, shared by the Settings window and the preview window's toolbar.
 enum HL {
     static let show = "highlightShow"            // overlay on/off
-    static let mode = "highlightMode"            // box | text
+    static let showBoxes = "highlightShowBoxes"  // draw a box over each match
+    static let showText = "highlightShowText"    // redraw each match as text
     static let boxHex = "highlightHex"           // box colour (also the text-chip background)
     static let opacity = "highlightOpacity"
     static let outline = "highlightOutline"
@@ -95,7 +96,7 @@ let boxOutlineFraction: CGFloat = 0.12
 struct MatchView: View {
     let text: String
     let size: CGSize
-    let mode: String
+    let showBoxes: Bool, showText: Bool
     let box: Color, textColor: Color
     let opacity: Double, outline: Bool
     let design: String, weight: String
@@ -129,8 +130,8 @@ struct MatchView: View {
     var italic: Bool = false
 
     var body: some View {
-        Group {
-            if mode == "text" {
+        ZStack {
+            if showText {
                 let w = HL.fontWeight(weight), d = HL.fontDesign(design)
                 let useMatch = renderedFontName != nil
                 let effectiveTextColor = (autoTextColor ? sampledTextColor : nil) ?? textColor
@@ -152,7 +153,8 @@ struct MatchView: View {
                     .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
                 }
                 .frame(width: size.width, height: size.height)
-            } else {
+            }
+            if showBoxes {
                 Rectangle().fill(box.opacity(opacity))
                     .overlay(Rectangle().stroke(box, lineWidth: outline ? 2 : 0))
                     .frame(width: size.width, height: size.height)
@@ -166,7 +168,7 @@ struct MatchView: View {
 /// times that same text was found on this image.
 struct MatchInfoPopup: View {
     let text: String
-    let mode: String
+    let showBoxes: Bool, showText: Bool
     /// Which match this is, of how many on the image. The card describes this one instance — its
     /// own size, colours and font — so it says which instance rather than counting how many times
     /// the same word turns up.
@@ -188,7 +190,7 @@ struct MatchInfoPopup: View {
             Text(total > 1 ? "Match \(index) of \(total) on this image" : "The only match on this image")
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
-            if mode == "text" {
+            if showText {
                 if let mf = matchedFont {
                     row("Font", "\(mf) \(fontIsManual ? "(picked)" : "(matched)"), \(Int(fontSize.rounded()))pt")
                 } else {
@@ -196,7 +198,9 @@ struct MatchInfoPopup: View {
                 }
                 colorRow("Text color", textColor)
                 colorRow("Background", bgColor)
-            } else {
+            }
+            if showBoxes {
+                if showText { Divider() }
                 row("Box size", "\(Int(boxSize.width.rounded()))×\(Int(boxSize.height.rounded())) px")
                 colorRow("Box color", boxColor)
                 row("Fill strength", "\(Int(opacity * 100))%")
@@ -228,7 +232,8 @@ struct MatchInfoPopup: View {
 
 struct SettingsView: View {
     @AppStorage(HL.show) private var show = true
-    @AppStorage(HL.mode) private var mode = "box"
+    @AppStorage(HL.showBoxes) private var showBoxes = true
+    @AppStorage(HL.showText) private var showText = true
     @AppStorage(HL.boxHex) private var boxHex = HL.defaultBox
     @AppStorage(HL.opacity) private var opacity = 0.35
     @AppStorage(HL.outline) private var outline = true
@@ -249,10 +254,8 @@ struct SettingsView: View {
         let bg = Binding<Color>(get: { Color(hex: bgHex) ?? .white }, set: { bgHex = $0.hexString })
         Form {
             Toggle("Show overlay on image", isOn: $show)
-            Picker("Show matches as", selection: $mode) {
-                Text("Bounding boxes").tag("box")
-                Text("Text in font color").tag("text")
-            }.pickerStyle(.segmented)
+            Toggle("Bounding boxes", isOn: $showBoxes)
+            Toggle("Text in font color", isOn: $showText)
 
             Section("Box") {
                 ColorPicker("Box color", selection: box, supportsOpacity: false)
@@ -262,7 +265,7 @@ struct SettingsView: View {
                     Text("\(Int(opacity * 100))%").monospacedDigit().frame(width: 40, alignment: .trailing)
                 }
                 Toggle("Outline", isOn: $outline)
-            }.disabled(mode == "text")
+            }.disabled(!showBoxes)
 
             Section("Text overlay") {
                 HStack {
@@ -292,13 +295,14 @@ struct SettingsView: View {
                      ? "Instead of the Font above, each match is redrawn in whichever installed font best matches its size and proportions — or in \(systemFontReplacement) if that turns out to be the system font. To pick a specific font (or nudge the size) instead of the auto-match, use the palette button in an open preview window's toolbar, where you can see what was detected."
                      : "Uses the Font and Weight above for every match.")
                     .font(.caption).foregroundStyle(.secondary)
-            }.disabled(mode == "box")
+            }.disabled(!showText)
 
             Section("Preview") {
                 ZStack {
                     Rectangle().fill(.gray.opacity(0.25))
                     Text("Screen Active 7h 31m").font(.title3).foregroundStyle(.secondary)
-                    MatchView(text: "Screen Active", size: CGSize(width: 150, height: 26), mode: mode,
+                    MatchView(text: "Screen Active", size: CGSize(width: 150, height: 26),
+                              showBoxes: showBoxes, showText: showText,
                               box: box.wrappedValue, textColor: txt.wrappedValue, opacity: opacity,
                               outline: outline, design: design, weight: weight,
                               background: bg.wrappedValue, autoBackground: autoBg,
@@ -315,13 +319,12 @@ struct SettingsView: View {
             }
 
             Button("Reset") {
-                show = true; mode = "box"; boxHex = HL.defaultBox; opacity = 0.35; outline = true
+                show = true; showBoxes = true; showText = true; boxHex = HL.defaultBox; opacity = 0.35; outline = true
                 textHex = HL.defaultText; autoTextColor = true; bgHex = HL.defaultBg; autoBg = true
                 design = "default"; weight = "regular"; autoFont = false
                 manualFont = ""; manualSize = 0; italic = false
             }
         }
         .padding(20).frame(width: 460)
-        .onAppear { if mode != "box" && mode != "text" { mode = "box" } }
     }
 }

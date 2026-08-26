@@ -113,31 +113,43 @@ Double-click a result, or press **View**.
 | | |
 |---|---|
 | ⌘[ / ⌘] | previous / next result |
-| ⌘− / ⌘+ | zoom out / in |
-| ⌘0 / ⌘1 | fit to window / actual size |
+| ⌥⌘[ / ⌥⌘] | previous / next match, with its hover card |
+| ⌘− / ⌘+ (or ⌘=), pinch | zoom out / in |
+| ⌘0 / ⌘9 | actual size / zoom to fit |
 | ⌘⇧O | overlay on/off |
+| ⌥⌘I | show / hide the style panel |
 | ⌘R | recalculate (see below) |
-| ⌘S | save the image as shown |
+| ⌘S | export the image as shown, as a PNG |
 | Esc | close |
+
+These are all in the menu bar too: **File** (Export as PNG, Reveal in Finder), **View** (overlay,
+zoom, style panel, Recalculate) and **Go** (images and matches). The toolbar keeps back/forward on
+the left and zoom, **Overlay**, **Style** and **Export** on the right. The file icon in the title
+bar works as in any document window: ⌘-click it for the folder, or drag it.
 
 Zoom is purely a view control. It changes what you can see of a full-resolution image; it never
 changes what is drawn into it.
 
-The line under the image gives the resolution and the folder. The `@2x` marker matters: screenshots
+The line under the image gives the resolution, the folder and the number of matches. The `@2x` marker matters: screenshots
 are saved at either 72 or 144 dpi, and on a 144 dpi one a point is two pixels. Sizes in the app are
 in points, so this tells you what a point is worth here.
 
-### Boxes or Text
+### Boxes and Text
+
+Two separate switches, both on by default. They are in the preview toolbar's **Overlay** menu
+(click the button itself to hide or show the whole overlay; use its arrow for the switches) and in
+the **View** menu (**Show Boxes**, **Show Text**).
 
 - **Boxes** draws a translucent rectangle over each match.
 - **Text** covers each match with a patch matching the background and redraws the word on top.
 
-Text mode is where the matching work happens.
+With both on, the box is drawn over the redrawn text. Text is where the matching work happens.
 
 ### The hover card
 
 Hover the glyphs of a match — the letters themselves, not a margin around them — and a card
 describes that one instance: which match it is, its size, the font, its colours and spacing.
+⌥⌘] and ⌥⌘[ step through the matches from the keyboard and show the same card.
 
 ---
 
@@ -174,17 +186,20 @@ within 1px horizontally and vertically.
 
 ## Adjusting it
 
-The **palette button** in the preview toolbar opens the style panel.
+**Style** in the preview toolbar (⌥⌘I) opens the style panel on the right of the window, so the
+image stays in view while you adjust it. It shows the Text settings when Text is on and the Box
+settings when Boxes is on.
 
-Each automatic value has a switch. Turn it off and the field becomes yours; turn it back on and the
-measured value returns:
+Each automatic value can be switched off. Do that and the field becomes yours; switch it back on
+and the measured value returns:
 
-- *Match text colour from image* / *Match background from image*
+- *Match text colour from image* / *Match background from image*. While these are on, the colour
+  below each is only a fallback, used where sampling fails, and is labelled that way.
 - *Match font from image* — picking a font from the menu turns this off by itself, since choosing a
   font is the opposite of matching one. Choosing **Auto** turns it back on.
-- *Fit size to the text in the image*
-- *Fit spacing to the text in the image*, with **Kerning** beside it
-- *Fit smoothness to the text in the image*
+- **Auto** beside Size, Spacing and Smoothness. Typing a value turns it off.
+
+**B** and **I** sit on the Size row; **Kerning** is below Smoothness.
 
 **⌘R Recalculate** re-reads the image and works every automatic value out again, discarding the
 manual ones. Use it if an image changed on disk or a scan went wrong.
@@ -194,15 +209,17 @@ manual ones. Use it if an image changed on disk or a scan went wrong.
 | per image | app-wide |
 |---|---|
 | font, size, spacing, smoothness, kerning, bold, italic, colours | overlay on/off |
-| | Boxes vs Text |
+| | Boxes and Text |
 | | the watermark |
 
 Style is per image because each screenshot has its own type sizes and colours, so tuning one should
 not restyle the rest. The three app-wide ones describe how you are looking at whatever is open, and
 following each image would mean paging through results kept changing the view under you.
 
-The panel ends with **Reset to defaults** (forget this image's settings) and **Save as default**
-(make this look the starting point for images that have none).
+The panel ends with a **Reset** menu and **Save as Default** (make this look the starting point for
+images that have none). Reset offers **Font to Automatic** (font, size, spacing, smoothness, bold,
+italic and kerning back to automatic), **This Image to Defaults** (forget this image's settings)
+and **Recalculate Everything** (⌘R, above).
 
 ---
 
@@ -229,7 +246,7 @@ Tick the box on each result you want, then:
 - **Export … to Miro** — uploads the composited images to a board, each with its OCR snippet as a
   sticky note. Needs a token with `boards:read` and `boards:write`; it is kept in your Keychain.
 
-**⌘S Save Image** in the preview writes just the one you are looking at.
+**⌘S Export as PNG** in the preview writes just the one you are looking at.
 
 Exports are always PNG, whatever the source was. The overlay is hard-edged text on flat colour,
 which is exactly what JPEG artefacts ruin.
