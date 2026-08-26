@@ -3,10 +3,6 @@ import AppKit
 import UniformTypeIdentifiers
 import OCRSearchCore
 
-/// "1 result" / "2 results" — every status message below used to print the literal string
-/// "result(s)", which reads as a debug placeholder rather than finished copy.
-func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
-
 struct Hit: Identifiable, Hashable {
     let path: String
     var snippet: String

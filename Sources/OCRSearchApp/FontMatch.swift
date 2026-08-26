@@ -357,3 +357,44 @@ func smoothnessToMatch(originalRise: CGFloat) -> CGFloat {
     guard originalRise > drawnEdgeRise else { return 0 }
     return (originalRise * originalRise - drawnEdgeRise * drawnEdgeRise).squareRoot() / 1.683
 }
+
+// MARK: - system-font helpers
+
+private extension Font.Design {
+    var nsDesign: NSFontDescriptor.SystemDesign {
+        switch self { case .rounded: return .rounded; case .serif: return .serif
+        case .monospaced: return .monospaced; default: return .default }
+    }
+}
+
+func nsFont(size: CGFloat, weight: Font.Weight, design: Font.Design) -> NSFont {
+    let nsWeight: NSFont.Weight = { switch weight { case .medium: return .medium
+        case .bold: return .bold; default: return .regular } }()
+    let base = NSFont.systemFont(ofSize: size, weight: nsWeight)
+    guard let d = base.fontDescriptor.withDesign(design.nsDesign), let f = NSFont(descriptor: d, size: size)
+    else { return base }
+    return f
+}
+
+/// Largest font size at which `text` (in the given weight/design) fits inside `box`, sized by
+/// the font's *cap height* rather than its full line-height metric (ascender + descender +
+/// leading, what NSString's own size measurement uses). Vision's bounding box tightly wraps the
+/// visible glyphs, not a font's abstract line box, and different fonts/designs carry wildly
+/// different amounts of built-in leading for the same visible glyph size — measured against full
+/// line height, a design with generous leading gets fitted to a noticeably smaller point size to
+/// hit the same box height, even though its actual letters are the same size as one with tighter
+/// leading. Cap height scales linearly with point size and is close to font-invariant as a
+/// fraction of it, so solving directly from it (no search needed for height) keeps the *visible*
+/// text size consistent across designs instead of just the measured line box.
+func fittedFontSize(for text: String, weight: Font.Weight, design: Font.Design, fitting box: CGSize) -> CGFloat {
+    guard !text.isEmpty, box.width > 1, box.height > 1 else { return 4 }
+    let probe = nsFont(size: 100, weight: weight, design: design)
+    let capRatio = probe.capHeight / 100
+    guard capRatio > 0 else { return 4 }
+    var size = box.height / capRatio
+    let f = nsFont(size: size, weight: weight, design: design)
+    let width = (text as NSString).size(withAttributes: [.font: f]).width
+    let allowedWidth = box.width * widthTolerance   // see widthTolerance in FontMatch.swift
+    if width > allowedWidth, width > 0 { size *= allowedWidth / width }
+    return max(size, 4)
+}

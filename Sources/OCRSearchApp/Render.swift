@@ -2,135 +2,16 @@ import AppKit
 import SwiftUI
 import OCRSearchCore
 
-// MARK: - style snapshot
+// MARK: - drawing constants
 
-/// The persisted overlay look (the HL.* defaults), snapshotted into a plain value so a render can
-/// run off the main actor without reading @AppStorage — which is a SwiftUI view-side wrapper and
-/// isn't available to the export path, whether that runs from the preview window's Save command
-/// or from a batch export with no preview window open at all.
-struct OverlayStyle: Sendable, Codable, Equatable {
-    var show = true
-    var showBoxes = true
-    var showText = true
-    var boxHex = HL.defaultBox
-    var opacity = 0.35
-    var outline = true
-    var textHex = HL.defaultText
-    var autoTextColor = true
-    var bgHex = HL.defaultBg
-    var autoBg = true
-    var design = "default"
-    var weight = "regular"
-    var autoFont = false
-    var manualFont = ""
-    /// Letter spacing, in points, applied on top of what the font does by itself. nil fits it to
-    /// each match's measured width — see inkFittedTracking.
-    var manualTracking: Double? = nil
-    /// Whether the font's own pair kerning is used. Off replaces it with even spacing.
-    var kerning: Bool = true
-    /// How much the redrawn text is softened, as a Gaussian standard deviation in points. nil
-    /// matches each match's own measured edge softness — see smoothnessToMatch.
-    var manualSmoothness: Double? = nil
-    /// Fixed size for every match, in points — the unit that means the same thing whatever the
-    /// image's own resolution is, and independent of how the window happens to be showing it.
-    /// 0 = fit each match individually. See RenderPlan.imageScale.
-    var manualSize: Double = 0
-    var italic = false
+/// Breathing room around each match, as a fraction of that match's height, split evenly on both
+/// sides. A fraction rather than a fixed number of points: the overlay is drawn into the image at
+/// the image's own resolution, so anything expressed in on-screen points would mean a different
+/// thing at every zoom level and window size — and did, until it was measured.
+let matchBoxPaddingFraction: CGFloat = 0.3
 
-    /// Boxes and text are app-wide (see forImage), so they are left out of what an image saves.
-    private enum CodingKeys: String, CodingKey {
-        case show, boxHex, opacity, outline, textHex, autoTextColor, bgHex, autoBg, design, weight
-        case autoFont, manualFont, manualTracking, kerning, manualSmoothness, manualSize, italic
-    }
-
-    // MARK: per image
-    //
-    // The look is stored per image, not once for the app. Every image is a different screenshot
-    // with its own type sizes and colours, so a font or size that is right for one is usually
-    // wrong for the next; sharing one set of values meant tuning an image silently restyled every
-    // other one, and there was no way to go back to what a given image looked like. The Settings
-    // window still sets the defaults an image starts from.
-
-    private static let store = "imageStyles"
-    /// Enough that returning to an image from a session's work still finds its settings, bounded
-    /// so the defaults file cannot grow without limit.
-    private static let keep = 300
-
-    /// The look for `path`: what was last set for that image, or the defaults if it has none.
-    static func forImage(_ path: String, _ d: UserDefaults = .standard) -> OverlayStyle {
-        guard let raw = d.dictionary(forKey: store)?[path] as? Data,
-              var s = try? JSONDecoder().decode(OverlayStyle.self, from: raw) else { return current(d) }
-        // Whether the overlay is on, and boxes or text, are app-wide: they describe how you are
-        // looking at whatever is open rather than this image, so a saved copy of them is ignored
-        // in favour of the current setting.
-        let live = current(d)
-        s.show = live.show
-        s.showBoxes = live.showBoxes
-        s.showText = live.showText
-        return s
-    }
-
-    func save(for path: String, _ d: UserDefaults = .standard) {
-        guard let data = try? JSONEncoder().encode(self) else { return }
-        var all = d.dictionary(forKey: Self.store) ?? [:]
-        all[path] = data
-        // Oldest-first eviction is not worth a timestamp per entry; dropping arbitrary extras once
-        // over the cap only costs those images their overrides, and they fall back to the defaults.
-        if all.count > Self.keep {
-            all = all.prefix(Self.keep).reduce(into: [String: Any]()) { $0[$1.key] = $1.value }
-        }
-        d.set(all, forKey: Self.store)
-    }
-
-    static func clear(_ path: String, _ d: UserDefaults = .standard) {
-        guard var all = d.dictionary(forKey: store) else { return }
-        all[path] = nil
-        d.set(all, forKey: store)
-    }
-
-    /// Writes this look back as the defaults every image starts from.
-    func saveAsDefaults(_ d: UserDefaults = .standard) {
-        d.set(show, forKey: HL.show)
-        d.set(showBoxes, forKey: HL.showBoxes); d.set(showText, forKey: HL.showText)
-        d.set(boxHex, forKey: HL.boxHex); d.set(opacity, forKey: HL.opacity)
-        d.set(outline, forKey: HL.outline); d.set(textHex, forKey: HL.textHex)
-        d.set(autoTextColor, forKey: HL.autoTextColor); d.set(bgHex, forKey: HL.bgHex)
-        d.set(autoBg, forKey: HL.autoBg); d.set(design, forKey: HL.design)
-        d.set(weight, forKey: HL.weight); d.set(autoFont, forKey: HL.autoFont)
-        d.set(manualFont, forKey: HL.manualFont); d.set(manualSize, forKey: HL.manualSize)
-        d.set(italic, forKey: HL.italic)
-    }
-
-    /// Reads whatever the Settings window and the preview toolbar have persisted. Every lookup
-    /// goes through an explicit "is it set at all?" check rather than UserDefaults' zero/false
-    /// defaults, so an untouched install exports with the same look it previews with instead of
-    /// silently falling back to `false` for every toggle.
-    static func current(_ d: UserDefaults = .standard) -> OverlayStyle {
-        func bool(_ key: String, _ fallback: Bool) -> Bool {
-            d.object(forKey: key) == nil ? fallback : d.bool(forKey: key)
-        }
-        func double(_ key: String, _ fallback: Double) -> Double {
-            d.object(forKey: key) == nil ? fallback : d.double(forKey: key)
-        }
-        return OverlayStyle(
-            show: bool(HL.show, true),
-            showBoxes: bool(HL.showBoxes, true),
-            showText: bool(HL.showText, true),
-            boxHex: d.string(forKey: HL.boxHex) ?? HL.defaultBox,
-            opacity: double(HL.opacity, 0.35),
-            outline: bool(HL.outline, true),
-            textHex: d.string(forKey: HL.textHex) ?? HL.defaultText,
-            autoTextColor: bool(HL.autoTextColor, true),
-            bgHex: d.string(forKey: HL.bgHex) ?? HL.defaultBg,
-            autoBg: bool(HL.autoBg, true),
-            design: d.string(forKey: HL.design) ?? "default",
-            weight: d.string(forKey: HL.weight) ?? "regular",
-            autoFont: bool(HL.autoFont, false),
-            manualFont: d.string(forKey: HL.manualFont) ?? "",
-            manualSize: double(HL.manualSize, 0),
-            italic: bool(HL.italic, false))
-    }
-}
+/// Box-mode outline, likewise as a fraction of the match's height.
+let boxOutlineFraction: CGFloat = 0.12
 
 // MARK: - colour plumbing
 
@@ -496,11 +377,4 @@ private func drawWatermark(ctx: CGContext, width: CGFloat, height: CGFloat) {
     let mh = mw * (art.size.height / art.size.width)
     art.draw(in: CGRect(x: rect.midX - mw / 2, y: rect.midY - mh / 2, width: mw, height: mh),
              from: .zero, operation: .sourceOver, fraction: watermarkOpacity)
-}
-
-extension Array {
-    /// Every per-match array (colours, fonts, sizes) is built alongside `matches` and should be
-    /// the same length, but a failed sample legitimately yields a short or empty array; this
-    /// keeps the draw loop from trapping on that rather than silently dropping the overlay.
-    subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }

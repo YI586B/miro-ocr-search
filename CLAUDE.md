@@ -7,10 +7,13 @@ The app searches a folder you open directly — it reads every image in it once,
 The `ocrsearch` CLI is separate and still uses the SQLite FTS5 index.
 
 ## Layout
-- Sources/OCRSearchCore: OCR.swift (Vision OCR + findMatches boxes), Database.swift (SQLite FTS5 - CLI only), Miro.swift (REST v2 client, exportToMiro), Config.swift (indexFolder, dbPath - CLI only)
+- Sources/OCRSearchCore: OCR.swift (Vision OCR, findMatches boxes, imagePixelSize), Search.swift (searchTerms), Database.swift (SQLite FTS5 - CLI only; also SearchMode), Miro.swift (REST v2 client, exportToMiro), Config.swift (imageExts; indexFolder, dbPath - CLI only)
 - Sources/ocrsearch: CLI (index / search / export)
-- Sources/OCRSearchApp: SwiftUI app (search window, full-size preview window with match overlay, Settings)
-- Sources/OCRSearchApp/Render.swift: composites image + overlays + watermark at native resolution for export (OverlayStyle, RenderPlan, renderExportPNG)
+- Sources/OCRSearchApp (flat on purpose: Watermark.swift and FontMatch.swift find assets via #filePath):
+  - OCRSearchApp.swift (entry), Commands.swift (menu bar; preview actions via focusedSceneValue), Panels.swift, Utilities.swift
+  - ContentView.swift + Model.swift (search window), MiroSheet.swift, PreviewView.swift (preview window + hover card), SettingsView.swift
+  - OverlayStyle.swift (HL keys, OverlayStyle and its per-image storage), ImageSampling.swift (sampledInk / sampledBackgroundColors / imagePointScale), FontMatch.swift (font detection and fitting), Render.swift (RenderPlan, drawOverlay, renderExportPNG), Watermark.swift
+  - SelfTest.swift: `OCRSearchApp --selftest <images> <out>`; Scripts/golden-check.sh baseline|check <dir> compares plans and PNG hashes. Run before and after any change to detection, sampling or rendering.
 - miro-files/: local test screenshots, NOT tracked (personal; purged from history before the repo was published). Scripts and notes below refer to it as it exists on this machine.
 - run-app.command: build release + launch the app
 - make-icons.sh + Scripts/make-icon.swift: regenerate AppIcon.iconset / AppIcon.icns / icon-1024.png from watermark.svg (build-app.sh only copies the .icns)
