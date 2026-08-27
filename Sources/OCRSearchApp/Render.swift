@@ -59,13 +59,13 @@ struct RenderPlan: Sendable {
     static func build(path: String, query: String, searchMode: SearchMode, style: OverlayStyle) -> RenderPlan {
         let px = imagePixelSize(at: path) ?? .zero
         let pointScale = imagePointScale(at: path)
-        let matches = style.show ? PlanStage.find(path: path, query: query, searchMode: searchMode) : []
-        guard !matches.isEmpty, px.width > 0, px.height > 0 else {
+        let (matches, page) = style.show ? PlanStage.find(path: path, query: query, searchMode: searchMode) : ([], nil)
+        guard let page, !matches.isEmpty, px.width > 0, px.height > 0 else {
             return RenderPlan(pixelSize: px, imageScale: pointScale, matches: [], bgColors: [], ink: [],
                               matchedFonts: [], fontSizes: [], trackings: [])
         }
         let (bg, ink) = style.showText ? PlanStage.sample(path: path, matches: matches) : ([], [])
-        let family = PlanStage.family(for: style) { PlanStage.detectFont(path: path, pixelSize: px) }
+        let family = PlanStage.family(for: style) { PlanStage.detectFont(page: page, pixelSize: px) }
         let sizes = PlanStage.fitSizes(matches: matches, ink: ink, family: family, style: style, pixelSize: px)
         let tracks = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: sizes, family: family,
                                             style: style, pixelSize: px, imageScale: pointScale)
@@ -81,11 +81,13 @@ struct RenderPlan: Sendable {
 /// style change affects. One copy of each, so what the window shows and what an export writes
 /// cannot drift apart.
 enum PlanStage {
-    /// The search's matches on the image; none when the query has no terms left.
-    static func find(path: String, query: String, searchMode: SearchMode) -> [TextMatch] {
+    /// The search's matches on the image, and the recognised page they came from, which font
+    /// detection reuses rather than recognising the image a second time. No matches and no page
+    /// when the query has no terms left, and no OCR is run for it.
+    static func find(path: String, query: String, searchMode: SearchMode) -> (matches: [TextMatch], page: RecognizedPage?) {
         let terms = searchTerms(query, mode: searchMode)
-        guard !terms.isEmpty else { return [] }
-        return (try? findMatches(at: URL(fileURLWithPath: path), terms: terms)) ?? []
+        guard !terms.isEmpty, let page = try? RecognizedPage(at: URL(fileURLWithPath: path)) else { return ([], nil) }
+        return (page.matches(for: terms), page)
     }
 
     /// Each match's surrounding background colour, and its glyphs' colour and extent.
@@ -105,8 +107,8 @@ enum PlanStage {
     /// one string to score, it's back to the same single-string-coincidence problem aggregation
     /// was meant to fix). The overlay still only highlights the matches — this only changes what
     /// font detection itself is scored against.
-    static func detectFont(path: String, pixelSize: CGSize) -> String? {
-        let all = ((try? allTextBoxes(at: URL(fileURLWithPath: path))) ?? []).map { (text: $0.text, rect: $0.rect) }
+    static func detectFont(page: RecognizedPage, pixelSize: CGSize) -> String? {
+        let all = page.allTextBoxes.map { (text: $0.text, rect: $0.rect) }
         return bestMatchingFont(forImage: all, pixelSize: pixelSize, from: candidateFontFamilies())
     }
 

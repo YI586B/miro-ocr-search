@@ -7,7 +7,7 @@ The app searches a folder you open directly — it reads every image in it once,
 The `ocrsearch` CLI is separate and still uses the SQLite FTS5 index.
 
 ## Layout
-- Sources/OCRSearchCore: OCR.swift (Vision OCR, findMatches boxes, imagePixelSize), Search.swift (searchTerms), Database.swift (SQLite FTS5 - CLI only; also SearchMode), Miro.swift (REST v2 client, exportToMiro), Config.swift (imageExts; indexFolder, dbPath - CLI only)
+- Sources/OCRSearchCore: OCR.swift (RecognizedPage = one Vision pass giving text, match boxes and all line boxes; imagePixelSize), Search.swift (searchTerms), Database.swift (SQLite FTS5 - CLI only; also SearchMode), Miro.swift (REST v2 client, exportToMiro), Config.swift (imageExts; indexFolder, dbPath - CLI only)
 - Sources/ocrsearch: CLI (index / search / export)
 - Sources/OCRSearchApp (flat on purpose: Watermark.swift and FontMatch.swift find assets via #filePath):
   - OCRSearchApp.swift (entry), Commands.swift (menu bar; preview actions via focusedSceneValue), Panels.swift, Utilities.swift

@@ -38,6 +38,8 @@ import OCRSearchCore
     @Published private(set) var overlayLayer: NSImage?
 
     private var path = ""
+    /// The recognised page the matches came from, kept for font detection.
+    private var page: RecognizedPage?
     /// The latest drawing style: the image's own, with the app-wide overlay, Boxes and Text
     /// switches applied.
     private var style = OverlayStyle()
@@ -69,21 +71,21 @@ import OCRSearchCore
         failed = image == nil
         pixelSize = .zero; imageScale = 1
         matches = []; bgColors = []; ink = []
-        detectedFont = nil; family = nil; detected = false
+        detectedFont = nil; family = nil; detected = false; page = nil
         fontSizes = []; trackings = []; smoothness = []; sizesFor = nil; trackingsFor = nil
         overlayLayer = nil
         guard image != nil else { return }
 
         scanning = true
         let scan = await Task.detached(priority: .userInitiated) {
-            let matches = PlanStage.find(path: path, query: query, searchMode: searchMode)
+            let (matches, page) = PlanStage.find(path: path, query: query, searchMode: searchMode)
             let (bg, ink) = PlanStage.sample(path: path, matches: matches)
             return (px: imagePixelSize(at: path) ?? .zero, scale: imagePointScale(at: path),
-                    matches: matches, bg: bg, ink: ink)
+                    matches: matches, page: page, bg: bg, ink: ink)
         }.value
         guard gen == loadGeneration else { return }
         pixelSize = scan.px; imageScale = scan.scale
-        matches = scan.matches; bgColors = scan.bg; ink = scan.ink
+        matches = scan.matches; page = scan.page; bgColors = scan.bg; ink = scan.ink
         smoothness = PlanStage.fitSmoothness(ink: ink, count: matches.count)
         // With the latest style, which may have changed while the scan ran.
         await update(self.style)
@@ -98,11 +100,11 @@ import OCRSearchCore
         guard pixelSize.width > 0, pixelSize.height > 0 else { return }
         let gen = loadGeneration
 
-        if (style.showText || style.autoFont), !detected, !matches.isEmpty {
+        if (style.showText || style.autoFont), !detected, !matches.isEmpty, let page {
             detected = true
-            let (p, px) = (path, pixelSize)
+            let px = pixelSize
             let found = await Task.detached(priority: .userInitiated) {
-                PlanStage.detectFont(path: p, pixelSize: px)
+                PlanStage.detectFont(page: page, pixelSize: px)
             }.value
             guard gen == loadGeneration else { return }
             detectedFont = found
