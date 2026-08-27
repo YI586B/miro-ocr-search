@@ -154,9 +154,10 @@ struct PreviewView: View {
                                             // that. Sized and placed in the image's own pixels and then
                                             // scaled to the window, so the preview shows the badge at the
                                             // same size relative to the image that an export writes --
-                                            // see watermarkPixelSize.
-                                            let ww = watermarkPixelSize.width * scale
-                                            let wh = watermarkPixelSize.height * scale
+                                            // see watermarkPixelSize(forImage:).
+                                            let badge = watermarkPixelSize(forImage: preview.pixelSize)
+                                            let ww = badge.width * scale
+                                            let wh = badge.height * scale
                                             // Both have to agree: the menu switch decides whether the
                                             // badge exists at all, and the overlay toggle decides
                                             // whether you are looking at a marked-up image or the

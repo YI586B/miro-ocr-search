@@ -407,14 +407,16 @@ private func blurredText(line: CTLine, origin: CGPoint, shear: CGFloat,
 }
 
 /// The same bottom-right badge the preview stamps on every image, at the same pixel size and
-/// offsets — see watermarkPixelSize — so the export matches what was on screen.
+/// offsets — see watermarkPixelSize(forImage:) — so the export matches what was on screen. Drawn
+/// last, on top of the image and the overlay.
 ///
 /// Built here rather than blitted from a file: the background is a translucent rectangle and the
 /// wordmark is vector art rasterised straight into this context at its final size, which
 /// is what keeps the badge's edges and letterforms clean on a full-resolution image instead of
 /// upscaling a small bitmap.
 private func drawWatermark(ctx: CGContext, width: CGFloat, height: CGFloat) {
-    let ww = watermarkPixelSize.width, wh = watermarkPixelSize.height
+    let badge = watermarkPixelSize(forImage: CGSize(width: width, height: height))
+    let ww = badge.width, wh = badge.height
     let rect = CGRect(x: width - watermarkRightMargin - ww, y: watermarkBottomMargin,
                       width: ww, height: wh)
     guard rect.minX > 0, rect.maxY < height else { return }   // image too small to carry the badge

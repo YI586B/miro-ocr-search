@@ -17,7 +17,7 @@ The `ocrsearch` CLI is separate and still uses the SQLite FTS5 index.
 - miro-files/: local test screenshots, NOT tracked (personal; purged from history before the repo was published). Scripts and notes below refer to it as it exists on this machine.
 - run-app.command: build release + launch the app
 - make-icons.sh + Scripts/make-icon.swift: regenerate AppIcon.iconset / AppIcon.icns / icon-1024.png from watermark.svg (build-app.sh only copies the .icns)
-- Scripts/verify-watermark.swift <renderedDir> <sourceDir>: checks the watermark badge in exported images (63x34, 20px margins, centred)
+- Scripts/verify-watermark.swift <renderedDir> <sourceDir>: checks the watermark badge in exported images (size from the image diagonal, 20px margins, centred)
 
 ## Build / run
     swift build -c release 2>&1 | grep -E "error|Build complete"
@@ -29,7 +29,7 @@ The `ocrsearch` CLI is separate and still uses the SQLite FTS5 index.
 - Overlay is sized and placed against the glyphs measured off the image (sampledInk -> inkFittedFontSize/inkDrawOrigin), NOT Vision's box, which runs 8-11% taller than the ink inside it. Measured on IMG_0849: placement within 1px, height within 5%, colour exact.
 - Font detection (FontMatch.rankFonts) compares letter shapes: each line drawn in the candidate, stretched over the ink measured off the image, correlated with it. On the 17 iPhone screenshots in miro-files SF Pro Text ranks first on all (0.66-0.83); the old width-at-Vision-box-height score picked Verdana on all of them. Below 0.5 = no match. An SF winner is reported as Noto Sans (deliberate; bundled, registered at launch).
 - The preview window and the export draw the same bitmap (drawOverlay / overlayLayerImage); MatchView now only backs the Settings sample swatch.
-- Watermark verified across all 17 miro-files: badge exactly 63x34 at 20px right/bottom margins, wordmark centred.
+- Watermark size scales with the image diagonal (watermarkPixelSize(forImage:): diagonal x 63/2886.13028, height x 34/63, rounded; 63x34 at 1206x2622); margins fixed at 20px. Verified on all 21 miro-files images with Scripts/verify-watermark.swift.
 - Sources/assets/logo.png and watermark.jpeg are unused: logo.png is fully opaque (its "transparency" is a painted checkerboard), so the icon and the in-app badge come from watermark.svg instead.
 - Written but NOT yet compiled/tested: Miro export (untested against real API; needs a Miro token).
 - Index DB (CLI only): ~/Library/Application Support/ocrsearch/index.db. Miro token is stored in the Keychain by the app, or MIRO_TOKEN for the CLI.

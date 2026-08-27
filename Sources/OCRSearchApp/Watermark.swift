@@ -33,21 +33,11 @@ let watermarkArtwork: NSImage? = {
     return NSImage(contentsOf: url)
 }()
 
-/// Badge geometry in the image's own pixels: a 63x34 badge sitting 20px in from the right edge
-/// and 20px up from the bottom. The size and the bottom offset are what the reference screenshot
-/// that already carried this watermark uses (miro-files/IMG_0849.PNG); its right offset measured
-/// 21px, squared off to 20 here so the badge is inset equally on both edges.
-///
-/// Fixed pixels, not fractions of the image: the badge is meant to be that size, full stop, the
-/// way a real watermark is stamped at one size rather than growing with the canvas. (It was
-/// fractional before, which happened to give exactly 63x34 on the 1356px-wide reference and
-/// something smaller on every other image.) The trade-off is that on a much larger image the
-/// badge is proportionally smaller — deliberate, but the numbers to change are right here.
 /// The wordmark, recoloured to watermarkInk.
 ///
 /// The artwork carries the near-black it uses on a light page, which is not what is wanted on a
 /// grey chip. Recoloured once here rather than at each draw, and rasterised generously so the
-/// badge — 43px of wordmark at export size — is always scaling one down rather than stretching
+/// badge — tens of pixels of wordmark at export size — is always scaling one down rather than stretching
 /// one up.
 let watermarkWordmark: NSImage? = {
     guard let art = watermarkArtwork, art.size.width > 0 else { return nil }
@@ -68,8 +58,29 @@ let watermarkWordmark: NSImage? = {
     return NSImage(cgImage: img, size: NSSize(width: w, height: h))
 }()
 
-let watermarkPixelSize = CGSize(width: 63, height: 34)
+/// The badge is 63x34 on an image whose diagonal is this many pixels — a 1206x2622 iPhone
+/// screenshot — and scales with the diagonal from there.
+let watermarkReferenceDiagonal: CGFloat = 2886.13028
+let watermarkReferenceSize = CGSize(width: 63, height: 34)
 
+/// The badge's size in the image's own pixels: it grows with the image's diagonal, so it keeps the
+/// same share of any image, portrait or landscape, instead of being one fixed size that looks
+/// large on a small image and lost on a big one.
+///
+///     width  = hypot(image width, image height) × 63 / 2886.13028
+///     height = width × 34 / 63
+///
+/// both rounded to whole pixels, so the badge's edges land on the pixel grid. 63x34 on a
+/// 1206x2622 screenshot; 71x38 on 1356x2948; 29x16 on a 1100x735 photo.
+func watermarkPixelSize(forImage size: CGSize) -> CGSize {
+    let diagonal = hypot(size.width, size.height)
+    let width = diagonal * (watermarkReferenceSize.width / watermarkReferenceDiagonal)
+    let height = width * (watermarkReferenceSize.height / watermarkReferenceSize.width)
+    return CGSize(width: width.rounded(), height: height.rounded())
+}
+
+/// Fixed offsets, in the image's own pixels, whatever the badge's size: 20px in from the right
+/// edge and 20px up from the bottom.
 let watermarkRightMargin: CGFloat = 20
 
 let watermarkBottomMargin: CGFloat = 20

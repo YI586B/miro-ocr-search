@@ -231,7 +231,9 @@ and **Recalculate Everything** (⌘R, above).
 
 ## The watermark
 
-A 63×34 badge, 20px in from the right and bottom. **View ▸ Watermark** switches it off, and asks
+A badge 20px in from the right and bottom, sized to the image: it scales with the image's diagonal,
+so it is 63×34 on a 1206×2622 iPhone screenshot, 71×38 on a 1356×2948 one and 29×16 on a 1100×735
+photo (width = diagonal × 63 / 2886.13028, height = width × 34 / 63, both rounded). **View ▸ Watermark** switches it off, and asks
 for a password to do so. It shows only when the overlay is on as well — with the overlay off you
 are looking at the plain image, and a badge would contradict that.
 
@@ -294,8 +296,8 @@ Per-image styles are keyed by **file path**, so moving or renaming an image lose
     ./make-icons.sh                                  # rebuild the app icon from watermark.svg
     swift Scripts/verify-watermark.swift <rendered> <sources>
 
-`verify-watermark.swift` checks exported images against their originals: badge exactly 63×34, 20px
-margins, wordmark centred. It finds the badge by diffing against the source rather than hunting for
+`verify-watermark.swift` checks exported images against their originals: badge exactly the size the
+formula above gives for that image, 20px margins, wordmark centred. It finds the badge by diffing against the source rather than hunting for
 it by colour, which fails on dark-mode screenshots.
 
 ---

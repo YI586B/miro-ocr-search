@@ -6,7 +6,15 @@ import AppKit
 // badge by colour alone does not work — these screenshots are a mix of light and dark mode, and
 // several have UI content of their own running into that corner.)
 //
-// Usage: wmtest.swift <renderedDir> <sourceDir>
+// Usage: verify-watermark.swift <renderedDir> <sourceDir>
+//
+// The expected badge size scales with the image's diagonal, as in watermarkPixelSize(forImage:)
+// in Sources/OCRSearchApp/Watermark.swift: 63x34 on a 1206x2622 screenshot. Keep the two in step.
+func expectedBadge(_ w: Int, _ h: Int) -> (Int, Int) {
+    let width = hypot(CGFloat(w), CGFloat(h)) * (63 / 2886.13028)
+    let height = width * (34 / 63)
+    return (Int(width.rounded()), Int(height.rounded()))
+}
 
 func rep(_ url: URL) -> NSBitmapImageRep? {
     guard let d = try? Data(contentsOf: url) else { return nil }
@@ -18,7 +26,7 @@ let renderedDir = URL(fileURLWithPath: CommandLine.arguments[1])
 let sourceDir = URL(fileURLWithPath: CommandLine.arguments[2])
 let files = (try! FileManager.default.contentsOfDirectory(atPath: renderedDir.path)).sorted()
 
-print(pad("file", 16) + pad("image", 12) + pad("badge", 10) + pad("margins", 14)
+print(pad("file", 16) + pad("image", 12) + pad("badge", 10) + pad("expected", 10) + pad("margins", 14)
       + pad("wordmark", 10) + pad("centred", 16) + "verdict")
 var pass = 0, fail = 0
 
@@ -28,10 +36,13 @@ for f in files {
     let W = out.pixelsWide, H = out.pixelsHigh
     guard src.pixelsWide == W, src.pixelsHigh == H else { print("\(f): size mismatch"); fail += 1; continue }
 
-    // Bounding box of everything the render changed in the bottom-right corner.
+    let (ew, eh) = expectedBadge(W, H)
+
+    // Bounding box of everything the render changed in the bottom-right corner — a search area
+    // comfortably bigger than the badge and its margins.
     var minX = W, maxX = -1, minY = H, maxY = -1
-    for y in max(0, H - 120)..<H {
-        for x in max(0, W - 150)..<W {
+    for y in max(0, H - (eh + 80))..<H {
+        for x in max(0, W - (ew + 80))..<W {
             guard let a = out.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
                   let b = src.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
             let d = abs(a.redComponent - b.redComponent) + abs(a.greenComponent - b.greenComponent)
@@ -78,17 +89,17 @@ for f in files {
     let haveMark = flatCorner && insideBadge
     let (cl, cr, ct, cb) = (wx0 - minX, maxX - wx1, wy0 - minY, maxY - wy1)
 
-    let sizeOK = bw == 63 && bh == 34
+    let sizeOK = bw == ew && bh == eh
     let marginOK = right == 20 && bottom == 20
     let centredOK = !haveMark || (abs(cl - cr) <= 1 && abs(ct - cb) <= 1)
     let ok = sizeOK && marginOK && centredOK
     ok ? (pass += 1) : (fail += 1)
-    print(pad(f, 16) + pad("\(W)x\(H)", 12) + pad("\(bw)x\(bh)", 10)
+    print(pad(f, 16) + pad("\(W)x\(H)", 12) + pad("\(bw)x\(bh)", 10) + pad("(\(ew)x\(eh))", 10)
           + pad("r\(right) b\(bottom)", 14)
           + pad(haveMark ? "\(wx1-wx0+1)x\(wy1-wy0+1)" : "n/a", 10)
           + pad(haveMark ? "L\(cl)/R\(cr) T\(ct)/B\(cb)" : "busy corner", 16)
           + (ok ? "PASS" : "FAIL"))
 }
-print("\nexpected: badge 63x34, margins r20 b20, wordmark centred within 1px")
+print("\nexpected: badge scaled to the image diagonal (63x34 at 1206x2622), margins r20 b20, wordmark centred within 1px")
 print("\(pass) passed, \(fail) failed")
 exit(fail == 0 ? 0 : 1)
