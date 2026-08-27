@@ -9,9 +9,12 @@ import OCRSearchCore
 /// compare the two directories with Scripts/golden-check.sh: identical output means font
 /// detection, layout and rendering were not affected.
 ///
+/// Every image is also loaded through PreviewModel, as the preview window does, and exported
+/// from there; that PNG must be byte-identical to the batch export's, or the run fails.
+///
 /// Styles are built here rather than read from UserDefaults, so the result does not depend on
 /// what the app happens to have saved. The watermark follows its switch, as exports do.
-enum SelfTest {
+@MainActor enum SelfTest {
     static func runIfRequested() {
         let a = CommandLine.arguments
         guard let i = a.firstIndex(of: "--selftest"), a.count > i + 2 else { return }
@@ -70,6 +73,7 @@ enum SelfTest {
     }
 
     static func run(images: URL, out: URL) {
+        var previewChecked = 0, previewMismatches: [String] = []
         let fm = FileManager.default
         let paths = ((try? fm.contentsOfDirectory(atPath: images.path)) ?? [])
             .filter { imageExts.contains(($0 as NSString).pathExtension.lowercased()) }
@@ -84,9 +88,21 @@ enum SelfTest {
                 let name = (p as NSString).lastPathComponent
                 var entry = describe(plan)
                 entry["image"] = name
-                if let png = renderExportPNG(path: p, query: c.query, searchMode: c.mode, style: c.style, plan: plan) {
+                let png = renderExportPNG(path: p, query: c.query, searchMode: c.mode, style: c.style, plan: plan)
+                if let png {
                     try? png.write(to: dir.appendingPathComponent(name + ".png"))
                     entry["pngSHA256"] = SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined()
+                }
+                // Straight in with the case's style, and in with another style first and then
+                // switched — which is what exercises re-running only the stages a change affects.
+                for restyled in [false, true] {
+                    let (previewPlan, previewStyle, problems) = loadInPreview(path: p, c, restyled: restyled)
+                    let fromPreview = renderExportPNG(path: p, query: c.query, searchMode: c.mode,
+                                                      style: previewStyle, plan: previewPlan)
+                    previewChecked += 1
+                    let label = "\(c.name) \(name)\(restyled ? " (restyled)" : "")"
+                    if fromPreview != png { previewMismatches.append("\(label): export differs") }
+                    previewMismatches += problems.map { "\(label): \($0)" }
                 }
                 report.append(entry)
                 print("\(c.name) \(name): \(plan.matches.count) matches, font \(plan.matchedFonts.first.flatMap { $0 } ?? "-")")
@@ -95,6 +111,79 @@ enum SelfTest {
                 try? json.write(to: dir.appendingPathComponent("plan.json"))
             }
         }
+        print("preview runs: \(previewChecked), problems: \(previewMismatches.count)")
+        if !previewMismatches.isEmpty {
+            print("PREVIEW MISMATCH:\n  " + previewMismatches.joined(separator: "\n  "))
+            exit(1)
+        }
+    }
+
+    /// Loads `path` the way the preview window does and returns what its Export would render,
+    /// plus any step at which its cached fitting disagreed with fitting afresh.
+    ///
+    /// With `restyled`, it loads with a different look first — the opposite font choices, spacing
+    /// and switches — then walks back to the case's style one field at a time, and finally flips
+    /// each field on its own and back, as editing the style panel would. After every step the
+    /// model's family, sizes and spacing must equal the stages run from scratch on its own scan:
+    /// a stage it wrongly skipped shows up there even when a later step would have hidden it.
+    /// Spins the main run loop while waiting, since the model's work hops back to the main actor.
+    static func loadInPreview(path: String, _ c: Case, restyled: Bool) -> (RenderPlan, OverlayStyle, [String]) {
+        final class State { var done = false; var problems: [String] = [] }
+        let model = PreviewModel(), state = State()
+        let target = c.style
+        var first = target
+        if restyled {
+            first.showBoxes.toggle(); first.showText = true; first.autoFont.toggle()
+            first.manualFont = target.manualFont.isEmpty ? "Georgia" : ""
+            first.weight = target.weight == .bold ? .regular : .bold
+            first.design = target.design == .serif ? .system : .serif
+            first.kerning.toggle(); first.manualSize = target.manualSize > 0 ? 0 : 20
+            first.manualTracking = target.manualTracking == nil ? 1 : nil
+        }
+        let fields: [(String, (inout OverlayStyle) -> Void, (inout OverlayStyle) -> Void)] = [
+            ("kerning", { $0.kerning.toggle() }, { $0.kerning = target.kerning }),
+            ("manualTracking", { $0.manualTracking = $0.manualTracking == nil ? 1 : nil }, { $0.manualTracking = target.manualTracking }),
+            ("manualSize", { $0.manualSize = $0.manualSize > 0 ? 0 : 20 }, { $0.manualSize = target.manualSize }),
+            ("weight", { $0.weight = $0.weight == .bold ? .regular : .bold }, { $0.weight = target.weight }),
+            ("design", { $0.design = $0.design == .serif ? .system : .serif }, { $0.design = target.design }),
+            ("autoFont", { $0.autoFont.toggle() }, { $0.autoFont = target.autoFont }),
+            ("manualFont", { $0.manualFont = $0.manualFont.isEmpty ? "Georgia" : "" }, { $0.manualFont = target.manualFont }),
+            ("switches", { $0.showBoxes.toggle(); $0.showText.toggle() }, { $0.showBoxes = target.showBoxes; $0.showText = target.showText }),
+        ]
+        func check(_ s: OverlayStyle, _ step: String) {
+            let family = PlanStage.family(for: s) { model.detectedFont }
+            let sizes = PlanStage.fitSizes(matches: model.matches, ink: model.ink, family: family,
+                                           style: s, pixelSize: model.pixelSize)
+            let trackings = PlanStage.fitTrackings(matches: model.matches, ink: model.ink, sizes: sizes,
+                                                   family: family, style: s, pixelSize: model.pixelSize,
+                                                   imageScale: model.imageScale)
+            // Within a millionth of a point: CoreText's measurements wobble in the ninth digit from
+            // one call to the next for the same font and text. A stale value is off by far more.
+            func same(_ a: [CGFloat], _ b: [CGFloat]) -> Bool {
+                a.count == b.count && zip(a, b).allSatisfy { abs($0 - $1) < 1e-6 }
+            }
+            var wrong: [String] = []
+            if model.family != family { wrong.append("family") }
+            if !same(model.fontSizes, sizes) { wrong.append("sizes") }
+            if !same(model.trackings, trackings) { wrong.append("spacing") }
+            if model.drawingStyle != s { wrong.append("style") }
+            if !wrong.isEmpty { state.problems.append("after \(step): stale \(wrong.joined(separator: ", "))") }
+        }
+        Task { @MainActor in
+            await model.load(path: path, query: c.query, searchMode: c.mode, style: first)
+            check(first, "load")
+            if restyled {
+                var s = first
+                for (name, _, restore) in fields { restore(&s); await model.update(s); check(s, "setting \(name)") }
+                for (name, flip, restore) in fields {
+                    flip(&s); await model.update(s); check(s, "flipping \(name)")
+                    restore(&s); await model.update(s); check(s, "restoring \(name)")
+                }
+            }
+            state.done = true
+        }
+        while !state.done { RunLoop.main.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01)) }
+        return (model.plan, model.drawingStyle, state.problems)
     }
 
     /// The plan as plain JSON values, at full precision, so a difference in the last digit shows.

@@ -52,32 +52,74 @@ struct RenderPlan: Sendable {
     /// Blur fitted per match so the redrawn text is as soft as the text it covers.
     var smoothness: [CGFloat] = []
 
-    /// Does from scratch what PreviewView does incrementally as an image loads: find the matches,
-    /// sample each one's background and ink colour, auto-match a font family across the whole
-    /// page, then fit a size per match — all in the image's own pixel units.
+    /// Every stage at once, as an export needs it: find the matches, sample each one's background
+    /// and ink colour, auto-match a font family across the whole page, then fit a size, spacing
+    /// and softness per match — all in the image's own pixel units. PreviewModel runs the same
+    /// stages as the preview window loads an image and its style changes.
     static func build(path: String, query: String, searchMode: SearchMode, style: OverlayStyle) -> RenderPlan {
         let px = imagePixelSize(at: path) ?? .zero
         let pointScale = imagePointScale(at: path)
-        let url = URL(fileURLWithPath: path)
-        let terms = searchTerms(query, mode: searchMode)
-        let matches = (style.show && !terms.isEmpty)
-            ? ((try? findMatches(at: url, terms: terms)) ?? [])
-            : []
+        let matches = style.show ? PlanStage.find(path: path, query: query, searchMode: searchMode) : []
         guard !matches.isEmpty, px.width > 0, px.height > 0 else {
             return RenderPlan(pixelSize: px, imageScale: pointScale, matches: [], bgColors: [], ink: [],
                               matchedFonts: [], fontSizes: [], trackings: [])
         }
-        let rects = matches.map(\.rect)
-        let bg = style.showText ? sampledBackgroundColors(at: path, rects: rects) : []
-        let ink = style.showText ? sampledInk(at: path, rects: rects) : []
+        let (bg, ink) = style.showText ? PlanStage.sample(path: path, matches: matches) : ([], [])
+        let family = PlanStage.family(for: style) { PlanStage.detectFont(path: path, pixelSize: px) }
+        let sizes = PlanStage.fitSizes(matches: matches, ink: ink, family: family, style: style, pixelSize: px)
+        let tracks = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: sizes, family: family,
+                                            style: style, pixelSize: px, imageScale: pointScale)
+        let smooth = PlanStage.fitSmoothness(ink: ink, count: matches.count)
+        return RenderPlan(pixelSize: px, imageScale: pointScale, matches: matches, bgColors: bg, ink: ink,
+                          matchedFonts: Array(repeating: family, count: matches.count),
+                          fontSizes: sizes, trackings: tracks, smoothness: smooth)
+    }
+}
 
-        var family: String? = style.manualFont.isEmpty ? nil : style.manualFont
-        if style.autoFont, family == nil {
-            let all = ((try? allTextBoxes(at: url)) ?? []).map { (text: $0.text, rect: $0.rect) }
-            family = bestMatchingFont(forImage: all, pixelSize: px, from: candidateFontFamilies())
-        }
-        let families = Array(repeating: family, count: matches.count)
-        let sizes = matches.enumerated().map { i, m -> CGFloat in
+/// The steps a RenderPlan is built from, in order. RenderPlan.build runs them all at once for an
+/// export; PreviewModel runs them as the preview window loads, and again from the first step a
+/// style change affects. One copy of each, so what the window shows and what an export writes
+/// cannot drift apart.
+enum PlanStage {
+    /// The search's matches on the image; none when the query has no terms left.
+    static func find(path: String, query: String, searchMode: SearchMode) -> [TextMatch] {
+        let terms = searchTerms(query, mode: searchMode)
+        guard !terms.isEmpty else { return [] }
+        return (try? findMatches(at: URL(fileURLWithPath: path), terms: terms)) ?? []
+    }
+
+    /// Each match's surrounding background colour, and its glyphs' colour and extent.
+    static func sample(path: String, matches: [TextMatch]) -> (bg: [Color?], ink: [InkSample?]) {
+        let rects = matches.map(\.rect)
+        return (sampledBackgroundColors(at: path, rects: rects), sampledInk(at: path, rects: rects))
+    }
+
+    /// Auto-matches the whole image's text to one closest-looking installed font at once (see
+    /// bestMatchingFont(forImage:)), rather than judging each match independently — a screenshot
+    /// is essentially always set in a single consistent font throughout, and scoring across many
+    /// data points instead of one string at a time is what makes the system-font check reliable.
+    /// Scores against *every* line on the page (allTextBoxes), not just the matches — those are
+    /// filtered down to whatever the search happened to find, which for a specific search term
+    /// can be a single short phrase, too few data points for aggregation to do any good (this
+    /// was confirmed to be exactly why "New Relic" alone landed on the wrong font: with only that
+    /// one string to score, it's back to the same single-string-coincidence problem aggregation
+    /// was meant to fix). The overlay still only highlights the matches — this only changes what
+    /// font detection itself is scored against.
+    static func detectFont(path: String, pixelSize: CGSize) -> String? {
+        let all = ((try? allTextBoxes(at: URL(fileURLWithPath: path))) ?? []).map { (text: $0.text, rect: $0.rect) }
+        return bestMatchingFont(forImage: all, pixelSize: pixelSize, from: candidateFontFamilies())
+    }
+
+    /// The family drawn: a picked one wins; otherwise the detected one, but only while matching
+    /// is on. nil means the style's design and weight. `detected` is only called when needed.
+    static func family(for style: OverlayStyle, detected: () -> String?) -> String? {
+        if !style.manualFont.isEmpty { return style.manualFont }
+        return style.autoFont ? detected() : nil
+    }
+
+    static func fitSizes(matches: [TextMatch], ink: [InkSample?], family: String?,
+                         style: OverlayStyle, pixelSize px: CGSize) -> [CGFloat] {
+        matches.enumerated().map { i, m -> CGFloat in
             let w = style.weight.font, d = style.design.font
             // Fit to the ink measured off the image when there is any. Vision's box is the
             // fallback for a match whose glyphs could not be isolated — a blank box, or text on
@@ -91,20 +133,24 @@ struct RenderPlan: Sendable {
             return effectiveFontSize(for: m.text, weight: w, design: d, matchedFamily: family,
                                      fitting: box)
         }
-        // Spacing is fitted after the sizes, because it depends on the font at its final size.
-        let tracks = matches.enumerated().map { i, m -> CGFloat in
+    }
+
+    /// Spacing is fitted after the sizes, because it depends on the font at its final size.
+    static func fitTrackings(matches: [TextMatch], ink: [InkSample?], sizes: [CGFloat], family: String?,
+                             style: OverlayStyle, pixelSize px: CGSize, imageScale: CGFloat) -> [CGFloat] {
+        matches.enumerated().map { i, m -> CGFloat in
             guard let measured = ink[safe: i] ?? nil else { return 0 }
-            let size = style.manualSize > 0 ? CGFloat(style.manualSize) * pointScale : sizes[i]
+            let size = style.manualSize > 0 ? CGFloat(style.manualSize) * imageScale : (sizes[safe: i] ?? 12)
             let font = matchFont(size: size, weight: style.weight.font,
                                  design: style.design.font, matchedFamily: family)
             return inkFittedTracking(for: m.text, font: font, kerning: style.kerning,
                                      inkWidth: measured.rect.width * px.width)
         }
-        let smooth = matches.indices.map { i -> CGFloat in
-            smoothnessToMatch(originalRise: (ink[safe: i] ?? nil)?.edgeRise ?? 0)
-        }
-        return RenderPlan(pixelSize: px, imageScale: pointScale, matches: matches, bgColors: bg, ink: ink,
-                          matchedFonts: families, fontSizes: sizes, trackings: tracks, smoothness: smooth)
+    }
+
+    /// Softness comes straight from what was measured on the image, so it needs no font.
+    static func fitSmoothness(ink: [InkSample?], count: Int) -> [CGFloat] {
+        (0..<count).map { i in smoothnessToMatch(originalRise: (ink[safe: i] ?? nil)?.edgeRise ?? 0) }
     }
 }
 
