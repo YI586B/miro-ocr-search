@@ -127,10 +127,16 @@ zoom, style panel, Recalculate) and **Go** (images and matches). The toolbar kee
 the left and zoom, **Overlay**, **Style** and **Export** on the right. The file icon in the title
 bar works as in any document window: ⌘-click it for the folder, or drag it.
 
+The search field at the top right holds what is being found on the image, starting with the search
+the window was opened from. Change it and the matches update as you type — the image is not read
+again, so it is quick. While the field is in use, **Phrase** and **Any Word** appear under it, as
+in the search window. The new text stays in place as you page to other results in the same window;
+the search window's own list is not changed.
+
 Zoom is purely a view control. It changes what you can see of a full-resolution image; it never
 changes what is drawn into it.
 
-The line under the image gives the resolution, the folder and the number of matches. The `@2x` marker matters: screenshots
+The line under the image gives the resolution, the folder, and how many matches were found for what. The `@2x` marker matters: screenshots
 are saved at either 72 or 144 dpi, and on a 144 dpi one a point is two pixels. Sizes in the app are
 in points, so this tells you what a point is worth here.
 

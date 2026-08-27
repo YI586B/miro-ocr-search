@@ -85,9 +85,16 @@ enum PlanStage {
     /// detection reuses rather than recognising the image a second time. No matches and no page
     /// when the query has no terms left, and no OCR is run for it.
     static func find(path: String, query: String, searchMode: SearchMode) -> (matches: [TextMatch], page: RecognizedPage?) {
+        guard !searchTerms(query, mode: searchMode).isEmpty,
+              let page = try? RecognizedPage(at: URL(fileURLWithPath: path)) else { return ([], nil) }
+        return (find(page: page, query: query, searchMode: searchMode), page)
+    }
+
+    /// The search's matches on a page that has already been recognised — how the preview window
+    /// searches again without running Vision again.
+    static func find(page: RecognizedPage, query: String, searchMode: SearchMode) -> [TextMatch] {
         let terms = searchTerms(query, mode: searchMode)
-        guard !terms.isEmpty, let page = try? RecognizedPage(at: URL(fileURLWithPath: path)) else { return ([], nil) }
-        return (page.matches(for: terms), page)
+        return terms.isEmpty ? [] : page.matches(for: terms)
     }
 
     /// Each match's surrounding background colour, and its glyphs' colour and extent.

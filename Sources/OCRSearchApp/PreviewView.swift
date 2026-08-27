@@ -22,8 +22,10 @@ struct PreviewRequest: Codable, Hashable {
 
 struct PreviewView: View {
     let allPaths: [String]
-    let query: String
-    let searchMode: SearchMode
+    /// What to find on the image. Starts as the search the window was opened from and can be
+    /// changed in the window's own search field; it then applies to every image paged to here.
+    @State private var query: String
+    @State private var searchMode: SearchMode
     /// Which of allPaths is showing. A plain @State initialized from `startIndex` (rather than
     /// `startIndex` itself driving everything directly) so Previous/Next can move it without
     /// needing a new window — the whole point of carrying the full result list through.
@@ -32,8 +34,8 @@ struct PreviewView: View {
 
     init(allPaths: [String], startIndex: Int, query: String, searchMode: SearchMode) {
         self.allPaths = allPaths
-        self.query = query
-        self.searchMode = searchMode
+        _query = State(initialValue: query)
+        _searchMode = State(initialValue: searchMode)
         _index = State(initialValue: allPaths.indices.contains(startIndex) ? startIndex : 0)
     }
 
@@ -275,6 +277,21 @@ struct PreviewView: View {
                     .help("Write this image, with its overlays and watermark, to a PNG file (⌘S)")
             }
         }
+        // Top right, where Finder, Preview and Mail keep theirs. Phrase / Any Word show under it
+        // while it is in use, as in the search window.
+        .searchable(text: $query, placement: .toolbar, prompt: "Find on this image")
+        .searchScopes($searchMode) {
+            Text("Phrase").tag(SearchMode.phrase)
+            Text("Any Word").tag(SearchMode.words)
+        }
+        // As you type, once typing pauses: a search reuses the page already read, so it is quick,
+        // but not so quick that every keystroke is worth one.
+        .task(id: "\(query)|\(searchMode.rawValue)") {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            if query != preview.query || searchMode != preview.searchMode { hoverIndex = nil }
+            await preview.search(query: query, searchMode: searchMode)
+        }
         .onExitCommand { NSApp.keyWindow?.close() }
         .task(id: "\(path)#\(reloadToken)") {
             let saved = OverlayStyle.forImage(path)
@@ -382,7 +399,7 @@ struct PreviewView: View {
         // Captured before the panel opens, so what gets written is what was on screen when Save
         // was chosen rather than whatever the window has moved on to.
         let plan = preview.plan, st = preview.drawingStyle
-        let (p, q, sm) = (path, query, searchMode)
+        let (p, q, sm) = (path, preview.query, preview.searchMode)
         let panel = Panels.save
         panel.nameFieldStringValue = "\(name)-overlay.png"
         panel.allowedContentTypes = [.png]
@@ -405,11 +422,14 @@ struct PreviewView: View {
         (preview.ink[safe: i] ?? nil)?.rect ?? (preview.matches.indices.contains(i) ? preview.matches[i].rect : .zero)
     }
 
-    /// The match count, and why nothing is drawn when the overlay or both its parts are off.
+    /// The match count and what was searched for, and why nothing is drawn when the overlay or
+    /// both its parts are off.
     private var matchStatus: String {
         if preview.scanning { return "Finding matches…" }
-        if searchTerms(query, mode: searchMode).isEmpty { return "" }
-        let count = plural(preview.matches.count, "match")
+        let searched = preview.query.trimmingCharacters(in: .whitespaces)
+        if searchTerms(searched, mode: preview.searchMode).isEmpty { return "Type in the search field to find text" }
+        if preview.matches.isEmpty { return "No matches for “\(searched)” on this image" }
+        let count = "\(plural(preview.matches.count, "match")) for “\(searched)”"
         if !overlayOn { return "\(count) · overlay off" }
         if !showBoxes && !showText { return "\(count) · boxes and text off" }
         return count

@@ -12,6 +12,10 @@ import OCRSearchCore
 /// is on, not only while matching is, so the font menu can say what "Auto" would pick.
 @MainActor final class PreviewModel: ObservableObject {
     @Published private(set) var image: NSImage?
+    /// What the matches on screen were found with. The window's search field can run ahead of
+    /// this while a search is still going.
+    @Published private(set) var query = ""
+    @Published private(set) var searchMode: SearchMode = .phrase
     @Published private(set) var failed = false
     @Published private(set) var scanning = false
     @Published private(set) var pixelSize: CGSize = .zero
@@ -38,7 +42,7 @@ import OCRSearchCore
     @Published private(set) var overlayLayer: NSImage?
 
     private var path = ""
-    /// The recognised page the matches came from, kept for font detection.
+    /// The recognised page, kept so a new search and font detection need no second OCR pass.
     private var page: RecognizedPage?
     /// The latest drawing style: the image's own, with the app-wide overlay, Boxes and Text
     /// switches applied.
@@ -67,6 +71,8 @@ import OCRSearchCore
         let gen = loadGeneration
         self.path = path
         self.style = style
+        self.query = query
+        self.searchMode = searchMode
         image = NSImage(contentsOfFile: path)
         failed = image == nil
         pixelSize = .zero; imageScale = 1
@@ -77,19 +83,50 @@ import OCRSearchCore
         guard image != nil else { return }
 
         scanning = true
+        // Recognised whatever the query, so a search typed later in the window has a page to use.
         let scan = await Task.detached(priority: .userInitiated) {
-            let (matches, page) = PlanStage.find(path: path, query: query, searchMode: searchMode)
-            let (bg, ink) = PlanStage.sample(path: path, matches: matches)
-            return (px: imagePixelSize(at: path) ?? .zero, scale: imagePointScale(at: path),
-                    matches: matches, page: page, bg: bg, ink: ink)
+            (page: try? RecognizedPage(at: URL(fileURLWithPath: path)),
+             px: imagePixelSize(at: path) ?? .zero, scale: imagePointScale(at: path))
         }.value
         guard gen == loadGeneration else { return }
-        pixelSize = scan.px; imageScale = scan.scale
-        matches = scan.matches; page = scan.page; bgColors = scan.bg; ink = scan.ink
-        smoothness = PlanStage.fitSmoothness(ink: ink, count: matches.count)
-        // With the latest style, which may have changed while the scan ran.
-        await update(self.style)
+        pixelSize = scan.px; imageScale = scan.scale; page = scan.page
+        await rematch(gen)
         if gen == loadGeneration { scanning = false }
+    }
+
+    /// Searches the image again for `query`, from the page already recognised: only the matching,
+    /// sampling and fitting run again.
+    func search(query: String, searchMode: SearchMode) async {
+        guard query != self.query || searchMode != self.searchMode else { return }
+        self.query = query
+        self.searchMode = searchMode
+        // Still loading: load finishes with whatever the query is by then.
+        guard page != nil, pixelSize.width > 0 else { return }
+        let gen = loadGeneration
+        scanning = true
+        await rematch(gen)
+        if gen == loadGeneration, query == self.query, searchMode == self.searchMode { scanning = false }
+    }
+
+    /// Finds the current query's matches on the page, samples them, and refits the overlay.
+    private func rematch(_ gen: Int) async {
+        while true {
+            let (q, m, p, recognised) = (query, searchMode, path, page)
+            let found = await Task.detached(priority: .userInitiated) {
+                let matches = recognised.map { PlanStage.find(page: $0, query: q, searchMode: m) } ?? []
+                let (bg, ink) = PlanStage.sample(path: p, matches: matches)
+                return (matches: matches, bg: bg, ink: ink)
+            }.value
+            guard gen == loadGeneration else { return }
+            // Typed again while that ran: search for the newer text instead.
+            guard q == query, m == searchMode else { continue }
+            matches = found.matches; bgColors = found.bg; ink = found.ink
+            smoothness = PlanStage.fitSmoothness(ink: ink, count: matches.count)
+            fontSizes = []; trackings = []; sizesFor = nil; trackingsFor = nil
+            // With the latest style, which may have changed while this ran.
+            await update(style)
+            return
+        }
     }
 
     /// Takes a new drawing style and brings the overlay up to date with it, re-running only the

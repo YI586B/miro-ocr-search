@@ -152,7 +152,7 @@ import OCRSearchCore
     /// Loads `path` the way the preview window does and returns what its Export would render,
     /// plus any step at which its cached fitting disagreed with fitting afresh.
     ///
-    /// With `restyled`, it loads with a different look first — the opposite font choices, spacing
+    /// With `restyled`, it loads with a different search and look first — the opposite font choices, spacing
     /// and switches — then walks back to the case's style one field at a time, and finally flips
     /// each field on its own and back, as editing the style panel would. After every step the
     /// model's family, sizes and spacing must equal the stages run from scratch on its own scan:
@@ -201,9 +201,14 @@ import OCRSearchCore
             if !wrong.isEmpty { state.problems.append("after \(step): stale \(wrong.joined(separator: ", "))") }
         }
         Task { @MainActor in
-            await model.load(path: path, query: c.query, searchMode: c.mode, style: first)
+            // Restyled runs also start from another search and change to the case's, as typing in
+            // the window's search field does — matches found again from the page already read.
+            await model.load(path: path, query: restyled ? "Settings" : c.query,
+                             searchMode: restyled ? .words : c.mode, style: first)
             check(first, "load")
             if restyled {
+                await model.search(query: c.query, searchMode: c.mode)
+                check(first, "searching again")
                 var s = first
                 for (name, _, restore) in fields { restore(&s); await model.update(s); check(s, "setting \(name)") }
                 for (name, flip, restore) in fields {
