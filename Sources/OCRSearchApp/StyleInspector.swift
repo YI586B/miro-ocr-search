@@ -140,7 +140,7 @@ struct StyleInspector: View {
                         style.autoFont = on
                         if on { style.manualFont = "" }
                     }))
-                    .help("Redraw each match in whichever installed font best matches it (or \(systemFontReplacement) if that's the system font). Picking a font below turns this off.")
+                    .help("Redraw each match in whichever installed font has letter shapes closest to the text on the image (or \(systemFontReplacement) if that's the system font). Picking a font below turns this off.")
                 Picker("", selection: Binding<String>(
                         get: { style.manualFont },
                         // Picking a specific font is the opposite of matching one

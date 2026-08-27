@@ -13,7 +13,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct OCRSearchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    init() { SelfTest.runIfRequested() }
+    init() {
+        // Before anything can detect or draw a font: Noto Sans stands in for SF (see
+        // systemFontReplacement) and has to exist on Macs that never installed it.
+        registerBundledFonts()
+        SelfTest.runIfRequested()
+    }
     var body: some Scene {
         WindowGroup("Miro-ocr-search") { ContentView().frame(minWidth: 760, minHeight: 520) }
             .commands { WatermarkCommands(); PreviewCommands() }

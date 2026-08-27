@@ -14,12 +14,12 @@ swift build -c release 2>&1 | grep -E "error|Build complete"
 if [ "$cmd" = baseline ]; then
     rm -rf "$base"; mkdir -p "$base"
     .build/release/OCRSearchApp --selftest miro-files "$base" > "$base/../$(basename "$base").log" || { tail -5 "$base/../$(basename "$base").log"; exit 1; }
-    grep "preview runs" "$base/../$(basename "$base").log"; echo "baseline written to $base"; exit 0
+    grep -E "font detection|preview runs" "$base/../$(basename "$base").log"; echo "baseline written to $base"; exit 0
 fi
 new=$(mktemp -d)
 status=0
 .build/release/OCRSearchApp --selftest miro-files "$new" > "$new.log" || status=1
-grep -A30 "preview runs" "$new.log" || tail -5 "$new.log"
+grep -E "^font |font detection|FONT DETECTION|^  IMG" "$new.log"; grep -A30 "preview runs" "$new.log" || tail -5 "$new.log"
 # Numbers match within a millionth (CoreText's measurements wobble in the ninth digit between
 # calls); text, fonts and PNG hashes must match exactly.
 for d in "$base"/*/; do

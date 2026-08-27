@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import CoreText
+import ImageIO
 
 /// Sources/assets/fonts, resolved relative to this source file's own location rather than the
 /// process's current working directory, so it's found the same way whether the app is launched
@@ -91,87 +92,160 @@ private func supportsCharacters(in text: String, font: NSFont) -> Bool {
     return true
 }
 
-/// Largest size at which `family` fits `text` inside `box` (both width and height), and the
-/// resulting measured width — mirrors fittedFontSize(for:weight:design:fitting:) but for a named
-/// installed font instead of one of the four built-in system designs.
-private func fit(text: String, family: String, bold: Bool, box: CGSize) -> (size: CGFloat, width: CGFloat)? {
-    guard let base = nsFont(family: family, bold: bold, size: 12), supportsCharacters(in: text, font: base) else { return nil }
-    func measure(_ size: CGFloat) -> CGSize? {
-        guard let f = nsFont(family: family, bold: bold, size: size) else { return nil }
-        return (text as NSString).size(withAttributes: [.font: f])
-    }
-    guard let m0 = measure(4) else { return nil }
-    var lo: CGFloat = 4, hi = box.height * 1.6
-    var bestSize = lo, bestWidth = m0.width
-    for _ in 0..<10 {
-        let mid = (lo + hi) / 2
-        guard let m = measure(mid) else { break }
-        if m.height <= box.height { lo = mid; bestSize = mid; bestWidth = m.width } else { hi = mid }
-    }
-    return (bestSize, bestWidth)
-}
+// MARK: - detecting the font from the image
 
-/// How much worse the best system-font candidate's average error is allowed to be than the
-/// outright winner's, and still count as "the image is basically system-font text" — see
-/// bestMatchingFont(forImage:). Tuned against real screenshots: San Francisco is very often not
-/// literally the #1 candidate by width alone (other fonts can measure numerically closer without
-/// actually looking like a match — a wide, loosely-spaced font like Verdana can coincidentally
-/// absorb the gap between Vision's OCR boxes and true glyph width better than SF's tighter
-/// spacing, image-wide, without genuinely resembling it), but it should still rank competitively
-/// close when the text really is set in it.
-private let systemFontTolerance = 2.5
+/// Below this average shape score (see rankFonts) no candidate looks enough like the text to name
+/// it, and detection reports no match, so the Font and Weight settings apply instead. Measured on
+/// the test screenshots: iPhone UI text set in SF scores 0.63-0.80 for SF Pro Text, while photos
+/// and custom typefaces that are not among the candidates top out around 0.27-0.39.
+private let minimumShapeScore = 0.5
 
-/// Best-guess installed font family for a whole image's worth of matches, not judged one string
-/// at a time: for each candidate, average its *relative* width error (measured/actual width,
-/// fit to each match's box height) across every match, trying both regular and bold per match
-/// and keeping whichever measures closer (screenshot text mixes weights — headers vs. body —
-/// that a single global weight assumption would otherwise measure against incorrectly). A font
-/// that's only coincidentally close for one string won't stay close across many different ones,
-/// which judging each match independently was vulnerable to.
+/// At most this many lines are compared, the longest first: more letters say more about a font,
+/// and past a couple of dozen lines the ranking stops changing while the cost keeps growing.
+private let maxScoredLines = 20
+
+/// Lines are compared at this ink height at most, in pixels. Letterforms are still clearly told
+/// apart at this size, and it keeps the comparison to a fraction of a second per image.
+private let comparisonHeight: CGFloat = 32
+
+/// Best-guess installed font family for a whole image, or nil if nothing matches well enough.
 ///
-/// San Francisco often isn't the literal lowest-error candidate (see systemFontTolerance above),
-/// so rather than requiring it to outright win, substitute systemFontReplacement whenever the
-/// best system-font candidate's error is within `systemFontTolerance` of the true winner's.
-func bestMatchingFont(forImage items: [(text: String, rect: CGRect)], pixelSize: CGSize,
-                       from families: [String] = candidateFontFamilies()) -> String? {
-    let usable = items.filter { $0.text.count > 1 }   // single characters barely constrain width
-    guard !usable.isEmpty, pixelSize.width > 0, pixelSize.height > 0, !families.isEmpty else { return nil }
-
-    // Whether a family can be scored at all against every line on the page (used below); the
-    // per-line character-coverage check inside fit() already skips lines it can't render, so
-    // this only needs to confirm the family exists, not that it covers everything — requiring
-    // that would disqualify the whole family over a single exotic character anywhere on the page
-    // (a bullet, a chevron, an emoji — all common in real screenshots), which was silently
-    // emptying `scored` entirely and made auto-font fall back to the manual Font/Weight design.
-    func averageRelativeError(_ family: String) -> Double? {
-        guard nsFont(family: family, bold: false, size: 12) != nil else { return nil }
-        var total = 0.0, n = 0
-        for it in usable {
-            let box = CGSize(width: it.rect.width * pixelSize.width, height: it.rect.height * pixelSize.height)
-            guard box.width > 1, box.height > 1 else { continue }
-            let widths = [fit(text: it.text, family: family, bold: false, box: box)?.width,
-                          fit(text: it.text, family: family, bold: true, box: box)?.width].compactMap { $0 }
-            guard let width = widths.min(by: { abs($0 - box.width) < abs($1 - box.width) }) else { continue }
-            total += Double(abs(width - box.width)) / Double(box.width)
-            n += 1
-        }
-        return n > 0 ? total / Double(n) : nil
-    }
-
-    let scored = families.compactMap { family in averageRelativeError(family).map { (family, $0) } }
-    guard let winner = scored.min(by: { $0.1 < $1.1 }) else { return nil }
-    if let sfBest = scored.filter({ isSystemFont($0.0) }).min(by: { $0.1 < $1.1 }),
-       sfBest.1 <= winner.1 * systemFontTolerance,
-       NSFontManager.shared.availableFontFamilies.contains(systemFontReplacement) {
+/// When the winner is one of Apple's SF families, systemFontReplacement is returned in its place:
+/// that is a deliberate choice, not a detection result, so rankFonts still reports the SF family.
+func bestMatchingFont(forImage items: [(text: String, rect: CGRect)], path: String, pixelSize: CGSize,
+                      from families: [String] = candidateFontFamilies()) -> String? {
+    guard let winner = rankFonts(forImage: items, path: path, pixelSize: pixelSize, from: families).first,
+          winner.score >= minimumShapeScore else { return nil }
+    if isSystemFont(winner.family), NSFontManager.shared.availableFontFamilies.contains(systemFontReplacement) {
         return systemFontReplacement
     }
-    return winner.0
+    return winner.family
+}
+
+/// Every candidate family that could be scored, best first, by how closely its letter shapes match
+/// the text on the image.
+///
+/// Each line's glyphs are measured off the image (sampledInk) and cut out; the line is then drawn
+/// in the candidate font, scaled so its glyph outlines fill exactly the same box, and the two are
+/// compared pixel by pixel (normalised cross-correlation of ink strength: 1 is identical). Regular
+/// and bold are both tried per line, since screenshots mix weights. A family's score is its
+/// average over the lines it can draw.
+///
+/// This replaced comparing a single number — how wide the text comes out at the height of Vision's
+/// box — which could not tell fonts apart. Vision's box runs 8-11% taller than the ink, and each
+/// family reserves a different amount of line height around its letters, so that number rewarded
+/// wide, short-lined fonts: Verdana won on every iPhone screenshot, with SF Pro Text fourth to
+/// sixth. Compared by shape, SF Pro Text ranks first on all of them.
+func rankFonts(forImage items: [(text: String, rect: CGRect)], path: String, pixelSize: CGSize,
+               from families: [String] = candidateFontFamilies()) -> [(family: String, score: Double)] {
+    let usable = items.filter { $0.text.trimmingCharacters(in: .whitespaces).count > 1 }
+    guard !usable.isEmpty, pixelSize.width > 0, pixelSize.height > 0, !families.isEmpty,
+          let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return [] }
+    let ink = sampledInk(at: path, rects: usable.map(\.rect))
+    let W = CGFloat(image.width), H = CGFloat(image.height)
+
+    // The lines to compare, longest first, each cut out of the image as ink strength.
+    let lines = usable.indices
+        .compactMap { i -> (text: String, ink: CGRect)? in
+            guard let s = ink[i] ?? nil, s.rect.height * H > 6, s.rect.width * W > 2 else { return nil }
+            return (usable[i].text, s.rect)
+        }
+        .sorted { $0.text.count > $1.text.count }
+        .prefix(maxScoredLines)
+    let crops = lines.map { line in inkCrop(of: image, ink: line.ink, width: W, height: H) }
+
+    let scored = families.compactMap { family -> (family: String, score: Double)? in
+        guard nsFont(family: family, bold: false, size: 12) != nil else { return nil }
+        var total = 0.0, n = 0
+        for (line, crop) in zip(lines, crops) {
+            let best = [false, true].compactMap { bold -> Double? in
+                guard let font = nsFont(family: family, bold: bold, size: 100),
+                      supportsCharacters(in: line.text, font: font) else { return nil }
+                return shapeScore(line.text, font: font, against: crop)
+            }.max()
+            if let best { total += best; n += 1 }
+        }
+        // A family that can only draw a few of the lines would be judged on a flattering subset.
+        guard n > 0, n * 2 >= lines.count else { return nil }
+        return (family, total / Double(n))
+    }
+    return scored.sorted { $0.score > $1.score }
+}
+
+/// One line's glyphs cut out of the image as ink strength — each pixel's distance from the
+/// background level, taken as the median of the crop's border — at no more than
+/// comparisonHeight, with a small margin all round.
+private struct InkCrop {
+    var pixels: [Double]
+    var width: Int, height: Int
+    /// The glyph box inside the crop, in crop pixels, bottom-left origin.
+    var ink: CGRect
+}
+
+private let cropMargin: CGFloat = 3
+
+private func inkCrop(of image: CGImage, ink: CGRect, width W: CGFloat, height H: CGFloat) -> InkCrop {
+    let k = min(1, comparisonHeight / (ink.height * H))
+    let iw = ink.width * W * k, ih = ink.height * H * k
+    let w = Int((iw + 2 * cropMargin).rounded(.up)), h = Int((ih + 2 * cropMargin).rounded(.up))
+    var g = grayPixels(width: w, height: h) { ctx in
+        ctx.interpolationQuality = .high
+        ctx.translateBy(x: cropMargin - ink.minX * W * k, y: cropMargin - ink.minY * H * k)
+        ctx.scaleBy(x: k, y: k)
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: W, height: H))
+    }
+    var border: [Double] = []
+    for x in 0..<w { border.append(g[x]); border.append(g[(h - 1) * w + x]) }
+    for y in 0..<h { border.append(g[y * w]); border.append(g[y * w + w - 1]) }
+    let background = border.sorted()[border.count / 2]
+    g = g.map { abs($0 - background) }
+    return InkCrop(pixels: g, width: w, height: h, ink: CGRect(x: cropMargin, y: cropMargin, width: iw, height: ih))
+}
+
+/// How closely `text` drawn in `font`, stretched to fill the crop's glyph box, matches the crop.
+private func shapeScore(_ text: String, font: NSFont, against crop: InkCrop) -> Double? {
+    let bounds = glyphBounds(of: text, font: font)
+    guard bounds.width > 1, bounds.height > 1 else { return nil }
+    let sx = crop.ink.width / bounds.width, sy = crop.ink.height / bounds.height
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: text,
+        attributes: [.font: font, .foregroundColor: NSColor.white, .ligature: 0]))
+    let drawn = grayPixels(width: crop.width, height: crop.height) { ctx in
+        ctx.translateBy(x: crop.ink.minX - bounds.minX * sx, y: crop.ink.minY - bounds.minY * sy)
+        ctx.scaleBy(x: sx, y: sy)
+        ctx.textPosition = .zero
+        CTLineDraw(line, ctx)
+    }
+    return correlation(crop.pixels, drawn)
+}
+
+/// A grayscale bitmap, black to start with, drawn into by `draw`, as values from 0 to 1.
+private func grayPixels(width: Int, height: Int, _ draw: (CGContext) -> Void) -> [Double] {
+    guard width > 0, height > 0,
+          let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width,
+                              space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue),
+          let data = ctx.data else { return [] }
+    ctx.setFillColor(gray: 0, alpha: 1)
+    ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    draw(ctx)
+    let buf = data.bindMemory(to: UInt8.self, capacity: width * height)
+    return (0..<(width * height)).map { Double(buf[$0]) / 255 }
+}
+
+/// Normalised cross-correlation: 1 when the two images have the same shape, 0 when unrelated.
+private func correlation(_ a: [Double], _ b: [Double]) -> Double? {
+    guard a.count == b.count, !a.isEmpty else { return nil }
+    let n = Double(a.count), ma = a.reduce(0, +) / n, mb = b.reduce(0, +) / n
+    var ab = 0.0, aa = 0.0, bb = 0.0
+    for i in a.indices {
+        let x = a[i] - ma, y = b[i] - mb
+        ab += x * y; aa += x * x; bb += y * y
+    }
+    return aa > 0 && bb > 0 ? ab / (aa * bb).squareRoot() : nil
 }
 
 /// Largest size at which `family` fits `text` inside *both* dimensions of `box` — the actual
-/// on-screen render size. Unlike `fit()` above (which only constrains height, deliberately, so
-/// it can measure a candidate's natural width against the target for scoring), rendering needs
-/// to fit the box the same way fittedFontSize(for:weight:design:fitting:) does for the
+/// on-screen render size. Rendering needs to fit the box the same way fittedFontSize(for:weight:design:fitting:) does for the
 /// manual/design path: sized by cap height, not the font's full line-height metric. Different
 /// families carry wildly different amounts of built-in leading for the same visible glyph size
 /// (measured, Noto Sans's line height runs ~14% taller than SF's at the same point size, despite

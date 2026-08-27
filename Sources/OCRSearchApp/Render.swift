@@ -65,7 +65,7 @@ struct RenderPlan: Sendable {
                               matchedFonts: [], fontSizes: [], trackings: [])
         }
         let (bg, ink) = style.showText ? PlanStage.sample(path: path, matches: matches) : ([], [])
-        let family = PlanStage.family(for: style) { PlanStage.detectFont(page: page, pixelSize: px) }
+        let family = PlanStage.family(for: style) { PlanStage.detectFont(page: page, path: path, pixelSize: px) }
         let sizes = PlanStage.fitSizes(matches: matches, ink: ink, family: family, style: style, pixelSize: px)
         let tracks = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: sizes, family: family,
                                             style: style, pixelSize: px, imageScale: pointScale)
@@ -107,9 +107,9 @@ enum PlanStage {
     /// one string to score, it's back to the same single-string-coincidence problem aggregation
     /// was meant to fix). The overlay still only highlights the matches — this only changes what
     /// font detection itself is scored against.
-    static func detectFont(page: RecognizedPage, pixelSize: CGSize) -> String? {
+    static func detectFont(page: RecognizedPage, path: String, pixelSize: CGSize) -> String? {
         let all = page.allTextBoxes.map { (text: $0.text, rect: $0.rect) }
-        return bestMatchingFont(forImage: all, pixelSize: pixelSize, from: candidateFontFamilies())
+        return bestMatchingFont(forImage: all, path: path, pixelSize: pixelSize, from: candidateFontFamilies())
     }
 
     /// The family drawn: a picked one wins; otherwise the detected one, but only while matching

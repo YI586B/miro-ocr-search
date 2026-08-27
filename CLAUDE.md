@@ -27,6 +27,7 @@ The `ocrsearch` CLI is separate and still uses the SQLite FTS5 index.
 ## State
 - Verified on the Mac: CLI index + search work on miro-files. App folder search verified on miro-files: 21 images read in ~6s, search 0.001s, results only from the open folder.
 - Overlay is sized and placed against the glyphs measured off the image (sampledInk -> inkFittedFontSize/inkDrawOrigin), NOT Vision's box, which runs 8-11% taller than the ink inside it. Measured on IMG_0849: placement within 1px, height within 5%, colour exact.
+- Font detection (FontMatch.rankFonts) compares letter shapes: each line drawn in the candidate, stretched over the ink measured off the image, correlated with it. On the 17 iPhone screenshots in miro-files SF Pro Text ranks first on all (0.66-0.83); the old width-at-Vision-box-height score picked Verdana on all of them. Below 0.5 = no match. An SF winner is reported as Noto Sans (deliberate; bundled, registered at launch).
 - The preview window and the export draw the same bitmap (drawOverlay / overlayLayerImage); MatchView now only backs the Settings sample swatch.
 - Watermark verified across all 17 miro-files: badge exactly 63x34 at 20px right/bottom margins, wordmark centred.
 - Sources/assets/logo.png and watermark.jpeg are unused: logo.png is fully opaque (its "transparency" is a painted checkerboard), so the icon and the in-app badge come from watermark.svg instead.

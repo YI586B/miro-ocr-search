@@ -102,9 +102,9 @@ import OCRSearchCore
 
         if (style.showText || style.autoFont), !detected, !matches.isEmpty, let page {
             detected = true
-            let px = pixelSize
+            let (p, px) = (path, pixelSize)
             let found = await Task.detached(priority: .userInitiated) {
-                PlanStage.detectFont(page: page, pixelSize: px)
+                PlanStage.detectFont(page: page, path: p, pixelSize: px)
             }.value
             guard gen == loadGeneration else { return }
             detectedFont = found

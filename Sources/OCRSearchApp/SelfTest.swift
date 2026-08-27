@@ -19,8 +19,39 @@ import OCRSearchCore
         let a = CommandLine.arguments
         guard let i = a.firstIndex(of: "--selftest"), a.count > i + 2 else { return }
         guard legacyStyleDecodes() else { print("FAILED: a saved style from an earlier version no longer loads"); exit(1) }
+        guard fontDetectionHolds(images: URL(fileURLWithPath: a[i + 1])) else { exit(1) }
         run(images: URL(fileURLWithPath: a[i + 1]), out: URL(fileURLWithPath: a[i + 2]))
         exit(0)
+    }
+
+    /// Font detection against what is known about the test images: iPhone screenshots (IMG_*.PNG)
+    /// are set in SF Pro Text, so it must rank first on every one of them, and be reported as
+    /// systemFontReplacement. Every image's winner and score is printed for the log.
+    static func fontDetectionHolds(images: URL) -> Bool {
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: images.path)) ?? [])
+            .filter { imageExts.contains(($0 as NSString).pathExtension.lowercased()) }.sorted()
+        let expected = NSFontManager.shared.availableFontFamilies.contains("SF Pro Text") ? "SF Pro Text" : nil
+        var screenshots = 0, wrong: [String] = []
+        for name in names {
+            let path = images.appendingPathComponent(name).path
+            guard let page = try? RecognizedPage(at: URL(fileURLWithPath: path)),
+                  let px = imagePixelSize(at: path) else { continue }
+            let items = page.allTextBoxes.map { (text: $0.text, rect: $0.rect) }
+            let ranking = rankFonts(forImage: items, path: path, pixelSize: px)
+            let reported = bestMatchingFont(forImage: items, path: path, pixelSize: px)
+            let top = ranking.prefix(3).map { "\($0.family) \(String(format: "%.3f", $0.score))" }.joined(separator: ", ")
+            print("font \(name): \(top) -> \(reported ?? "no match")")
+            guard name.hasPrefix("IMG_"), name.lowercased().hasSuffix(".png") else { continue }
+            screenshots += 1
+            let winner = ranking.first?.family
+            let right = expected.map { winner == $0 } ?? winner.map(isSystemFont) ?? false
+            if !right || reported != systemFontReplacement {
+                wrong.append("\(name): ranked \(winner ?? "nothing") first, reported \(reported ?? "no match")")
+            }
+        }
+        print("font detection: \(screenshots - wrong.count)/\(screenshots) screenshots ranked \(expected ?? "an SF family") first and reported \(systemFontReplacement)")
+        if !wrong.isEmpty { print("FONT DETECTION FAILED:\n  " + wrong.joined(separator: "\n  ")) }
+        return wrong.isEmpty
     }
 
     /// A per-image style as saved by earlier versions — with the old Boxes-or-Text `mode` and

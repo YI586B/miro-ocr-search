@@ -103,7 +103,7 @@ struct SettingsView: View {
                      : "They're drawn over the Background color above, everywhere.")
                     .font(.caption).foregroundStyle(.secondary)
                 Text(autoFont
-                     ? "Instead of the Font above, each match is redrawn in whichever installed font best matches its size and proportions — or in \(systemFontReplacement) if that turns out to be the system font. To pick a specific font (or nudge the size) instead of the auto-match, use the palette button in an open preview window's toolbar, where you can see what was detected."
+                     ? "Instead of the Font above, each match is redrawn in whichever installed font has letter shapes closest to the text on the image — or in \(systemFontReplacement) if that turns out to be the system font. To pick a specific font (or nudge the size) instead of the auto-match, use the palette button in an open preview window's toolbar, where you can see what was detected."
                      : "Uses the Font and Weight above for every match.")
                     .font(.caption).foregroundStyle(.secondary)
             }.disabled(!showText)
