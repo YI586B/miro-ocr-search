@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 import ImageIO
 
-/// Pixels per point for an image: 2 for a screenshot saved at 144 dpi, 1 for one at 72.
+/// Pixels per point for an image: 2 for one saved at 144 dpi, 1 for one at 72.
 ///
 /// This folder mixes both — IMG_0849 is 1356x2948 at 72 dpi while the rest are 1206x2622 at 144 —
 /// which is exactly why a size expressed in pixels means a different apparent size from one image
@@ -62,11 +62,11 @@ func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
 /// big the redrawn text comes out.
 ///
 /// It started at 0.25 — the half-way point of the antialiased ramp, since distance is squared, and
-/// where a glyph outline nominally sits. Right for a clean outline, wrong for a screenshot: text
-/// on an image carries a softer skirt than the geometry suggests, so 0.25 clipped the outermost
+/// where a glyph outline nominally sits. Right for a clean outline, wrong for a captured
+/// image: text on one carries a softer skirt than the geometry suggests, so 0.25 clipped the outermost
 /// lit row off every measurement and every fit came out slightly small.
 ///
-/// Calibrated instead, over 30 cases (ten matches across five screenshots, each in three fonts),
+/// Calibrated instead, over 30 cases (ten matches across five images, each in three fonts),
 /// by rendering the fit and comparing its ink against the original's:
 ///
 ///     edge   mean bias   mean |error|   worst
@@ -77,7 +77,7 @@ func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
 ///     0.08     +1.42%       2.45%        6.9%
 ///
 /// 0.16 is the turning point on all three measures at once, which is what makes it a calibration
-/// rather than a number that suited one screenshot.
+/// rather than a number that suited one image.
 let inkEdgeFraction: CGFloat = 0.16
 
 /// One match's original text as measured off the image: the colour of its glyphs, and the box
@@ -89,7 +89,7 @@ struct InkSample: Sendable {
     /// How soft this text's edges are: the distance, in pixels, over which a stroke rises from 20%
     /// to 80% of its contrast with the background. About 1.0 for text drawn straight onto the
     /// pixel grid, more for text that has been through a resample — IMG_0849 is a 12% upscale of a
-    /// smaller screenshot and measures ~1.55 where a native one measures ~1.39.
+    /// smaller image and measures ~1.55 where a native one measures ~1.39.
     var edgeRise: CGFloat = 0
 }
 

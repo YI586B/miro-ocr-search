@@ -96,7 +96,7 @@ private func supportsCharacters(in text: String, font: NSFont) -> Bool {
 
 /// Below this average shape score (see rankFonts) no candidate looks enough like the text to name
 /// it, and detection reports no match, so the Font and Weight settings apply instead. Measured on
-/// the test screenshots: iPhone UI text set in SF scores 0.63-0.80 for SF Pro Text, while photos
+/// the test images: iPhone UI text set in SF scores 0.63-0.80 for SF Pro Text, while photos
 /// and custom typefaces that are not among the candidates top out around 0.27-0.39.
 private let minimumShapeScore = 0.5
 
@@ -128,13 +128,13 @@ func bestMatchingFont(forImage items: [(text: String, rect: CGRect)], path: Stri
 /// Each line's glyphs are measured off the image (sampledInk) and cut out; the line is then drawn
 /// in the candidate font, scaled so its glyph outlines fill exactly the same box, and the two are
 /// compared pixel by pixel (normalised cross-correlation of ink strength: 1 is identical). Regular
-/// and bold are both tried per line, since screenshots mix weights. A family's score is its
+/// and bold are both tried per line, since images mix weights. A family's score is its
 /// average over the lines it can draw.
 ///
 /// This replaced comparing a single number — how wide the text comes out at the height of Vision's
 /// box — which could not tell fonts apart. Vision's box runs 8-11% taller than the ink, and each
 /// family reserves a different amount of line height around its letters, so that number rewarded
-/// wide, short-lined fonts: Verdana won on every iPhone screenshot, with SF Pro Text fourth to
+/// wide, short-lined fonts: Verdana won on every iPhone image, with SF Pro Text fourth to
 /// sixth. Compared by shape, SF Pro Text ranks first on all of them.
 func rankFonts(forImage items: [(text: String, rect: CGRect)], path: String, pixelSize: CGSize,
                from families: [String] = candidateFontFamilies()) -> [(family: String, score: Double)] {
@@ -300,7 +300,7 @@ func renderableFontName(family: String, bold: Bool) -> String {
 /// Glyph path bounds, deliberately, not the font's line metrics. Line metrics describe the
 /// abstract box a typesetter reserves for a line — ascender to descender, plus leading — and
 /// different families reserve very different amounts of it for the same visible letters. What has
-/// to line up here is ink against ink measured off a screenshot, so the measurement has to be of
+/// to line up here is ink against ink measured off an image, so the measurement has to be of
 /// the ink.
 func glyphBounds(of text: String, font: NSFont, tracking: CGFloat = 0, kerning: Bool = true) -> CGRect {
     let attrs = overlayAttributes(font: font, tracking: tracking, kerning: kerning)

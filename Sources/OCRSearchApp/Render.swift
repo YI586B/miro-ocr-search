@@ -104,15 +104,15 @@ enum PlanStage {
     }
 
     /// Auto-matches the whole image's text to one closest-looking installed font at once (see
-    /// bestMatchingFont(forImage:)), rather than judging each match independently — a screenshot
+    /// bestMatchingFont(forImage:)), rather than judging each match independently — an image
     /// is essentially always set in a single consistent font throughout, and scoring across many
     /// data points instead of one string at a time is what makes the system-font check reliable.
     /// Scores against *every* line on the page (allTextBoxes), not just the matches — those are
     /// filtered down to whatever the search happened to find, which for a specific search term
     /// can be a single short phrase, too few data points for aggregation to do any good (this
-    /// was confirmed to be exactly why "New Relic" alone landed on the wrong font: with only that
-    /// one string to score, it's back to the same single-string-coincidence problem aggregation
-    /// was meant to fix). The overlay still only highlights the matches — this only changes what
+    /// was confirmed to be exactly why a short two-word search alone landed on the wrong font: with
+    /// only that one string to score, it's back to the same single-string-coincidence problem
+    /// aggregation was meant to fix). The overlay still only highlights the matches — this only changes what
     /// font detection itself is scored against.
     static func detectFont(page: RecognizedPage, path: String, pixelSize: CGSize) -> String? {
         let all = page.allTextBoxes.map { (text: $0.text, rect: $0.rect) }

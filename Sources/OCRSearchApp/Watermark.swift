@@ -59,7 +59,7 @@ let watermarkWordmark: NSImage? = {
 }()
 
 /// The badge is 63x34 on an image whose diagonal is this many pixels — a 1206x2622 iPhone
-/// screenshot — and scales with the diagonal from there.
+/// image — and scales with the diagonal from there.
 let watermarkReferenceDiagonal: CGFloat = 2886.13028
 let watermarkReferenceSize = CGSize(width: 63, height: 34)
 
@@ -71,7 +71,7 @@ let watermarkReferenceSize = CGSize(width: 63, height: 34)
 ///     height = width × 34 / 63
 ///
 /// both rounded to whole pixels, so the badge's edges land on the pixel grid. 63x34 on a
-/// 1206x2622 screenshot; 71x38 on 1356x2948; 29x16 on a 1100x735 photo.
+/// 1206x2622 image; 71x38 on 1356x2948; 29x16 on a 1100x735 photo.
 func watermarkPixelSize(forImage size: CGSize) -> CGSize {
     let diagonal = hypot(size.width, size.height)
     let width = diagonal * (watermarkReferenceSize.width / watermarkReferenceDiagonal)
@@ -90,7 +90,7 @@ let watermarkBottomMargin: CGFloat = 20
 /// reference, where it sat noticeably high (24% clearance above, 31% below).
 let watermarkWordmarkWidthFraction: CGFloat = 0.68
 
-/// 50% grey. The badge lands on screenshots of any colour, so it is translucent rather than a
+/// 50% grey. The badge lands on images of any colour, so it is translucent rather than a
 /// solid chip.
 let watermarkBackground = Color(white: 0.5, opacity: 0.5)
 
@@ -121,7 +121,7 @@ struct MiroBadge: View {
 /// Whether the badge is stamped at all, and the gate on turning it off.
 ///
 /// App-wide rather than per image: it is a decision about what leaves this app, not about how one
-/// screenshot is being looked at, so it is not part of OverlayStyle and does not travel with a
+/// image is being looked at, so it is not part of OverlayStyle and does not travel with a
 /// saved per-image look.
 ///
 /// The gate is a speed bump and worth being honest about as one. A password compiled into an app

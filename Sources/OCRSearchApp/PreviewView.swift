@@ -42,7 +42,7 @@ struct PreviewView: View {
     /// App-wide watermark switch; see Watermark. Held here so the preview redraws when it changes.
     @AppStorage(Watermark.key) private var watermarkOn = Watermark.defaultOn
     /// Whether the overlay is drawn, and whether it has boxes, text or both. App-wide rather than per image:
-    /// these are how you are looking at whatever is open, not facts about one screenshot, and
+    /// these are how you are looking at whatever is open, not facts about one image, and
     /// having them follow each image meant paging through results kept changing the view out from
     /// under you. The rest of the style stays per image — see OverlayStyle.
     @AppStorage(HL.show) private var overlayOn = OverlayStyle.defaults.show
@@ -439,9 +439,9 @@ struct PreviewView: View {
     /// A quiet line under the image saying what it is and where it came from.
     ///
     /// Both are worth having in sight. The resolution because every size the overlay works in is
-    /// in the image's own pixels, and whether a screenshot stores one or two of those per point
+    /// in the image's own pixels, and whether an image stores one or two of those per point
     /// decides what a size in points comes out as. The folder because a search spans a whole
-    /// directory of near-identically named screenshots, and the title bar only carries the file
+    /// directory of near-identically named images, and the title bar only carries the file
     /// name.
     private var imageInfoBar: some View {
         HStack(spacing: 8) {

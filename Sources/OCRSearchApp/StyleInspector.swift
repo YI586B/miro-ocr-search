@@ -208,7 +208,7 @@ struct StyleInspector: View {
                     Spacer()
                 }
                 // Softness, matched to how soft the covered text's edges are. Text drawn
-                // fresh is crisper than text that has been through a screenshot's
+                // fresh is crisper than text that has been through an image's
                 // resampling, and on an image that has been scaled the difference shows.
                 let fittedSmoothness = Double(((preview.smoothness.first ?? 0) / preview.imageScale * 100).rounded() / 100)
                 let smoothBinding = Binding<Double>(

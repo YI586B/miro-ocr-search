@@ -2,14 +2,14 @@ import AppKit
 
 // Verifies the watermark badge in a rendered export, exactly rather than heuristically: the
 // export is diffed against its own source image, so the pixels that changed in the bottom-right
-// corner ARE the badge, whatever the screenshot happens to have underneath it. (Looking for the
-// badge by colour alone does not work — these screenshots are a mix of light and dark mode, and
+// corner ARE the badge, whatever the image happens to have underneath it. (Looking for the
+// badge by colour alone does not work — these images are a mix of light and dark mode, and
 // several have UI content of their own running into that corner.)
 //
 // Usage: verify-watermark.swift <renderedDir> <sourceDir>
 //
 // The expected badge size scales with the image's diagonal, as in watermarkPixelSize(forImage:)
-// in Sources/OCRSearchApp/Watermark.swift: 63x34 on a 1206x2622 screenshot. Keep the two in step.
+// in Sources/OCRSearchApp/Watermark.swift: 63x34 on a 1206x2622 image. Keep the two in step.
 func expectedBadge(_ w: Int, _ h: Int) -> (Int, Int) {
     let width = hypot(CGFloat(w), CGFloat(h)) * (63 / 2886.13028)
     let height = width * (34 / 63)

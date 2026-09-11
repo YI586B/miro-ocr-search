@@ -1,6 +1,6 @@
 # Miro-ocr-search — guide
 
-A macOS app that reads the text in a folder of screenshots, lets you search it, and can redraw a
+A macOS app that reads the text in a folder of images, lets you search it, and can redraw a
 match on the image in a font matched to the original — then export the result to files or to a
 Miro board.
 
@@ -91,7 +91,7 @@ Vision OCR, keeps the text in memory, and searches that. What is listed always c
 folder named in the toolbar, as it is right now.
 
 The consequence worth knowing: reading is the slow part and it happens per session — about 11
-seconds for 21 screenshots. Searching afterwards is instant, because it is a substring scan over a
+seconds for 21 images. Searching afterwards is instant, because it is a substring scan over a
 few dozen strings.
 
 The folder menu also offers **Reload** (pick up files added or changed since), **Reveal in
@@ -136,7 +136,7 @@ the search window's own list is not changed.
 Zoom is purely a view control. It changes what you can see of a full-resolution image; it never
 changes what is drawn into it.
 
-The line under the image gives the resolution, the folder, and how many matches were found for what. The `@2x` marker matters: screenshots
+The line under the image gives the resolution, the folder, and how many matches were found for what. The `@2x` marker matters: images
 are saved at either 72 or 144 dpi, and on a 144 dpi one a point is two pixels. Sizes in the app are
 in points, so this tells you what a point is worth here.
 
@@ -218,7 +218,7 @@ manual ones. Use it if an image changed on disk or a scan went wrong.
 | | Boxes and Text |
 | | the watermark |
 
-Style is per image because each screenshot has its own type sizes and colours, so tuning one should
+Style is per image because each image has its own type sizes and colours, so tuning one should
 not restyle the rest. The three app-wide ones describe how you are looking at whatever is open, and
 following each image would mean paging through results kept changing the view under you.
 
@@ -232,7 +232,7 @@ and **Recalculate Everything** (⌘R, above).
 ## The watermark
 
 A badge 20px in from the right and bottom, sized to the image: it scales with the image's diagonal,
-so it is 63×34 on a 1206×2622 iPhone screenshot, 71×38 on a 1356×2948 one and 29×16 on a 1100×735
+so it is 63×34 on a 1206×2622 iPhone image, 71×38 on a 1356×2948 one and 29×16 on a 1100×735
 photo (width = diagonal × 63 / 2886.13028, height = width × 34 / 63, both rounded). **View ▸ Watermark** switches it off, and asks
 for a password to do so. It shows only when the overlay is on as well — with the overlay off you
 are looking at the plain image, and a badge would contradict that.
@@ -298,7 +298,7 @@ Per-image styles are keyed by **file path**, so moving or renaming an image lose
 
 `verify-watermark.swift` checks exported images against their originals: badge exactly the size the
 formula above gives for that image, 20px margins, wordmark centred. It finds the badge by diffing against the source rather than hunting for
-it by colour, which fails on dark-mode screenshots.
+it by colour, which fails on dark-mode images.
 
 ---
 

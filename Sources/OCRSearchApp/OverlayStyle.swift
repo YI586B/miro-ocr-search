@@ -103,8 +103,8 @@ struct OverlayStyle: Sendable, Codable, Equatable {
 
     // MARK: per image
     //
-    // The look is stored per image, not once for the app. Every image is a different screenshot
-    // with its own type sizes and colours, so a font or size that is right for one is usually
+    // The look is stored per image, not once for the app. Every image is different, with
+    // its own type sizes and colours, so a font or size that is right for one is usually
     // wrong for the next; sharing one set of values meant tuning an image silently restyled every
     // other one, and there was no way to go back to what a given image looked like. The Settings
     // window still sets the defaults an image starts from.

@@ -182,7 +182,7 @@ final class Model: ObservableObject {
         let style = OverlayStyle.current()
         Task.detached {
             do {
-                // A board full of untouched screenshots would lose the very thing the search
+                // A board full of untouched images would lose the very thing the search
                 // found, so what goes up is the composited image — the same render the folder
                 // export writes — staged in a temp directory the upload reads from. Anything that
                 // fails to render still goes up as its original rather than being dropped.

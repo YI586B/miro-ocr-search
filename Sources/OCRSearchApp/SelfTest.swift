@@ -24,7 +24,7 @@ import OCRSearchCore
         exit(0)
     }
 
-    /// Font detection against what is known about the test images: iPhone screenshots (IMG_*.PNG)
+    /// Font detection against what is known about the test images: iPhone images (IMG_*.PNG)
     /// are set in SF Pro Text, so it must rank first on every one of them, and be reported as
     /// systemFontReplacement. Every image's winner and score is printed for the log.
     static func fontDetectionHolds(images: URL) -> Bool {
