@@ -2,21 +2,14 @@ import SwiftUI
 import AppKit
 import CryptoKit
 
-/// Sources/assets/icon-1024.png — the composed app icon (see Scripts/make-icon.swift), resolved
-/// relative to this source file's own location (not the process's current working directory) so
-/// it's found the same way regardless of how the app was launched. Used for the Dock icon at
+/// Sources/assets/icon-1024.png — the composed app icon (see Scripts/make-icon.swift), found
+/// through assetURL, so in the app bundle or next to the sources. Used for the Dock icon at
 /// runtime and for MiroBadge, so both match the icon the bundle ships.
 ///
 /// Not logo.png, which despite appearances is fully opaque: its "transparent" background is a
 /// checkerboard painted into the pixels, so it renders as a literal checkered square anywhere it
 /// is drawn.
-let appLogo: NSImage? = {
-    let url = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()   // App.swift -> Sources/OCRSearchApp/
-        .deletingLastPathComponent()   // -> Sources/
-        .appendingPathComponent("assets/icon-1024.png")
-    return NSImage(contentsOfFile: url.path)
-}()
+let appLogo: NSImage? = NSImage(contentsOf: assetURL("icon-1024.png"))
 
 /// The miro badge stamped on the bottom-right of every opened image (see PreviewView) and on
 /// every exported one (see drawWatermark) — drawn rather than loaded, from the wordmark in
@@ -25,13 +18,7 @@ let appLogo: NSImage? = {
 /// Vector, not a bitmap: NSImage keeps an SVG as an _NSSVGImageRep and rasterises it at whatever
 /// size it is drawn at, so the same artwork is sharp in a scaled-down preview and in a
 /// full-resolution export. The bitmap it replaces could only be upscaled.
-let watermarkArtwork: NSImage? = {
-    let url = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .deletingLastPathComponent()
-        .appendingPathComponent("assets/watermark.svg")
-    return NSImage(contentsOf: url)
-}()
+let watermarkArtwork: NSImage? = NSImage(contentsOf: assetURL("watermark.svg"))
 
 /// The wordmark, recoloured to watermarkInk.
 ///

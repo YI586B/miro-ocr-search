@@ -59,7 +59,7 @@ from source avoids it entirely, because a locally built app is never quarantined
 
 Each release commit records the disk image's SHA-256. To check yours matches:
 
-    shasum -a 256 ~/Downloads/Miro-ocr-search-1.0.dmg
+    shasum -a 256 ~/Downloads/Miro-ocr-search-1.1.dmg
 
 ---
 

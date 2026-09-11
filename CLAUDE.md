@@ -9,7 +9,7 @@ The `ocrsearch` CLI is separate and still uses the SQLite FTS5 index.
 ## Layout
 - Sources/OCRSearchCore: OCR.swift (RecognizedPage = one Vision pass giving text, match boxes and all line boxes; imagePixelSize), Search.swift (searchTerms), Database.swift (SQLite FTS5 - CLI only; also SearchMode), Miro.swift (REST v2 client, exportToMiro), Config.swift (imageExts; indexFolder, dbPath - CLI only)
 - Sources/ocrsearch: CLI (index / search / export)
-- Sources/OCRSearchApp (flat on purpose: Watermark.swift and FontMatch.swift find assets via #filePath):
+- Sources/OCRSearchApp: assets (icon-1024.png, watermark.svg, fonts/) load through assetURL (Utilities.swift) — the app bundle's Resources (build-app.sh copies them), else Sources/assets via #filePath when run from the source tree.
   - OCRSearchApp.swift (entry), Commands.swift (menu bar; preview actions via focusedSceneValue), Panels.swift, Utilities.swift
   - ContentView.swift + Model.swift (search window), MiroSheet.swift, PreviewView.swift (preview window + hover card) with PreviewModel.swift (its scan and fitting) and StyleInspector.swift (style panel), SettingsView.swift
   - OverlayStyle.swift (HL keys, OverlayStyle and its per-image storage), ImageSampling.swift (sampledInk / sampledBackgroundColors / imagePointScale), FontMatch.swift (font detection and fitting), Render.swift (RenderPlan; PlanStage = the find/sample/detect/fit steps shared by export and PreviewModel; drawOverlay, renderExportPNG), Watermark.swift

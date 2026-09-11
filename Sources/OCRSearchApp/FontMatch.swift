@@ -3,15 +3,8 @@ import AppKit
 import CoreText
 import ImageIO
 
-/// Sources/assets/fonts, resolved relative to this source file's own location rather than the
-/// process's current working directory, so it's found the same way whether the app is launched
-/// via `swift run`, run-app.command, or the built binary directly.
-private var bundledFontsDirectory: URL {
-    URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()   // FontMatch.swift -> Sources/OCRSearchApp/
-        .deletingLastPathComponent()   // -> Sources/
-        .appendingPathComponent("assets/fonts")
-}
+/// Sources/assets/fonts, found through assetURL: in the app bundle, or next to the sources.
+private var bundledFontsDirectory: URL { assetURL("fonts") }
 
 /// Registers the bundled Noto Sans fonts (Sources/assets/fonts) with this process, so family
 /// "Noto Sans" becomes available right alongside whatever's actually installed on the system

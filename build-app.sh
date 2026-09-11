@@ -15,6 +15,11 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/OCRSearchApp "$APP/Contents/MacOS/OCRSearchApp"
 cp Info.plist "$APP/Contents/Info.plist"
 cp Sources/assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# What the app loads at runtime (see assetURL): without these in the bundle, a copy installed on
+# another Mac has no watermark wordmark, no Dock icon image and no bundled Noto Sans.
+cp Sources/assets/icon-1024.png Sources/assets/watermark.svg "$APP/Contents/Resources/"
+mkdir -p "$APP/Contents/Resources/fonts"
+cp Sources/assets/fonts/*.ttf "$APP/Contents/Resources/fonts/"
 touch "$APP"
 
 # Sign the assembled bundle. Without this the only signature is the one the linker put on the

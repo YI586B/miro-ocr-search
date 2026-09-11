@@ -25,3 +25,19 @@ extension Array {
     /// keeps the draw loop from trapping on that rather than silently dropping the overlay.
     subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
 }
+
+/// A file from Sources/assets. The installed app carries its own copy in Contents/Resources (see
+/// build-app.sh), which is what makes a downloaded copy work: the source folder, which #filePath
+/// points into, exists only on the Mac that built it. Running from the source tree (swift run,
+/// .build/release, the self-test) there is no such copy, and the source folder is used instead.
+func assetURL(_ name: String) -> URL {
+    if let bundled = Bundle.main.resourceURL?.appendingPathComponent(name),
+       FileManager.default.fileExists(atPath: bundled.path) {
+        return bundled
+    }
+    return URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()   // Utilities.swift -> Sources/OCRSearchApp/
+        .deletingLastPathComponent()   // -> Sources/
+        .appendingPathComponent("assets")
+        .appendingPathComponent(name)
+}
