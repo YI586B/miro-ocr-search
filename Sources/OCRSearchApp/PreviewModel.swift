@@ -28,8 +28,12 @@ import OCRSearchCore
     /// What font detection found, kept apart from `family` so the font menu can show it as
     /// "Auto (X)" even while a font is picked by hand.
     @Published private(set) var detectedFont: String?
+    /// Detection's full answer, including whether the family is Noto Sans standing in for SF.
+    private(set) var detection: DetectedFont?
     /// The family drawn; see PlanStage.family.
     @Published private(set) var family: String?
+    /// How much heavier the family is drawn; see PlanStage.weightBoost.
+    @Published private(set) var weightBoost: CGFloat = 1
     /// Fitted per match, in image pixels, once per change of font, design or weight — never on
     /// hover, zoom or window resize.
     @Published private(set) var fontSizes: [CGFloat] = []
@@ -59,7 +63,7 @@ import OCRSearchCore
     private var fitGeneration = 0
 
     private struct SizeInputs: Equatable {
-        var family: String?, design: TextDesign, weight: TextWeight
+        var family: String?, weightBoost: CGFloat, design: TextDesign, weight: TextWeight
     }
     private struct TrackingInputs: Equatable {
         var sizes: SizeInputs, manualSize: Double, kerning: Bool
@@ -77,7 +81,7 @@ import OCRSearchCore
         failed = image == nil
         pixelSize = .zero; imageScale = 1
         matches = []; bgColors = []; ink = []
-        detectedFont = nil; family = nil; detected = false; page = nil
+        detection = nil; detectedFont = nil; family = nil; weightBoost = 1; detected = false; page = nil
         fontSizes = []; trackings = []; smoothness = []; sizesFor = nil; trackingsFor = nil
         overlayLayer = nil
         guard image != nil else { return }
@@ -144,20 +148,23 @@ import OCRSearchCore
                 PlanStage.detectFont(page: page, path: p, pixelSize: px)
             }.value
             guard gen == loadGeneration else { return }
-            detectedFont = found
+            detection = found
+            detectedFont = found?.family
         }
 
         let current = self.style
-        let fam = PlanStage.family(for: current) { detectedFont }
+        let fam = PlanStage.family(for: current) { detection?.family }
+        let boost = PlanStage.weightBoost(for: current, detected: detection)
         family = fam
-        let sizeInputs = SizeInputs(family: fam, design: current.design, weight: current.weight)
+        weightBoost = boost
+        let sizeInputs = SizeInputs(family: fam, weightBoost: boost, design: current.design, weight: current.weight)
         if sizeInputs != sizesFor {
             sizesFor = sizeInputs
             fitGeneration += 1
             let fit = fitGeneration
             let (m, k, px) = (matches, ink, pixelSize)
             let sizes = await Task.detached(priority: .userInitiated) {
-                PlanStage.fitSizes(matches: m, ink: k, family: fam, style: current, pixelSize: px)
+                PlanStage.fitSizes(matches: m, ink: k, family: fam, weightBoost: boost, style: current, pixelSize: px)
             }.value
             guard gen == loadGeneration, fit == fitGeneration else { return }
             fontSizes = sizes
@@ -168,7 +175,7 @@ import OCRSearchCore
         if trackingInputs != trackingsFor {
             trackingsFor = trackingInputs
             trackings = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: fontSizes, family: fam,
-                                               style: latest, pixelSize: pixelSize, imageScale: imageScale)
+                                               weightBoost: boost, style: latest, pixelSize: pixelSize, imageScale: imageScale)
         }
         rebuildOverlay()
     }
@@ -179,7 +186,7 @@ import OCRSearchCore
     var plan: RenderPlan {
         RenderPlan(pixelSize: pixelSize, imageScale: imageScale, matches: style.show ? matches : [],
                    bgColors: bgColors, ink: ink, matchedFonts: Array(repeating: family, count: matches.count),
-                   fontSizes: fontSizes, trackings: trackings, smoothness: smoothness)
+                   fontSizes: fontSizes, trackings: trackings, smoothness: smoothness, weightBoost: weightBoost)
     }
 
     /// The style the overlay is drawn with.

@@ -51,6 +51,9 @@ struct RenderPlan: Sendable {
     var trackings: [CGFloat]
     /// Blur fitted per match so the redrawn text is as soft as the text it covers.
     var smoothness: [CGFloat] = []
+    /// How much heavier the matched family is drawn; 1 except where Noto Sans stands in for SF.
+    /// See PlanStage.weightBoost.
+    var weightBoost: CGFloat = 1
 
     /// Every stage at once, as an export needs it: find the matches, sample each one's background
     /// and ink colour, auto-match a font family across the whole page, then fit a size, spacing
@@ -65,14 +68,19 @@ struct RenderPlan: Sendable {
                               matchedFonts: [], fontSizes: [], trackings: [])
         }
         let (bg, ink) = style.showText ? PlanStage.sample(path: path, matches: matches) : ([], [])
-        let family = PlanStage.family(for: style) { PlanStage.detectFont(page: page, path: path, pixelSize: px) }
-        let sizes = PlanStage.fitSizes(matches: matches, ink: ink, family: family, style: style, pixelSize: px)
+        // Detected only when it will be used: nothing is picked by hand and matching is on.
+        let detected = style.manualFont.isEmpty && style.autoFont
+            ? PlanStage.detectFont(page: page, path: path, pixelSize: px) : nil
+        let family = PlanStage.family(for: style) { detected?.family }
+        let boost = PlanStage.weightBoost(for: style, detected: detected)
+        let sizes = PlanStage.fitSizes(matches: matches, ink: ink, family: family, weightBoost: boost,
+                                       style: style, pixelSize: px)
         let tracks = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: sizes, family: family,
-                                            style: style, pixelSize: px, imageScale: pointScale)
+                                            weightBoost: boost, style: style, pixelSize: px, imageScale: pointScale)
         let smooth = PlanStage.fitSmoothness(ink: ink, count: matches.count)
         return RenderPlan(pixelSize: px, imageScale: pointScale, matches: matches, bgColors: bg, ink: ink,
                           matchedFonts: Array(repeating: family, count: matches.count),
-                          fontSizes: sizes, trackings: tracks, smoothness: smooth)
+                          fontSizes: sizes, trackings: tracks, smoothness: smooth, weightBoost: boost)
     }
 }
 
@@ -114,9 +122,17 @@ enum PlanStage {
     /// only that one string to score, it's back to the same single-string-coincidence problem
     /// aggregation was meant to fix). The overlay still only highlights the matches — this only changes what
     /// font detection itself is scored against.
-    static func detectFont(page: RecognizedPage, path: String, pixelSize: CGSize) -> String? {
+    static func detectFont(page: RecognizedPage, path: String, pixelSize: CGSize) -> DetectedFont? {
         let all = page.allTextBoxes.map { (text: $0.text, rect: $0.rect) }
-        return bestMatchingFont(forImage: all, path: path, pixelSize: pixelSize, from: candidateFontFamilies())
+        return detectedFont(forImage: all, path: path, pixelSize: pixelSize, from: candidateFontFamilies())
+    }
+
+    /// How much heavier to draw the family: systemFontReplacementWeightBoost when the family
+    /// drawn is Noto Sans standing in for a detected SF font, 1 otherwise. A family picked by hand
+    /// is drawn as it is, Noto Sans included, and so is one detected in its own right.
+    static func weightBoost(for style: OverlayStyle, detected: DetectedFont?) -> CGFloat {
+        guard style.manualFont.isEmpty, style.autoFont, detected?.standsInForSystemFont == true else { return 1 }
+        return systemFontReplacementWeightBoost
     }
 
     /// The family drawn: a picked one wins; otherwise the detected one, but only while matching
@@ -126,7 +142,7 @@ enum PlanStage {
         return style.autoFont ? detected() : nil
     }
 
-    static func fitSizes(matches: [TextMatch], ink: [InkSample?], family: String?,
+    static func fitSizes(matches: [TextMatch], ink: [InkSample?], family: String?, weightBoost: CGFloat,
                          style: OverlayStyle, pixelSize px: CGSize) -> [CGFloat] {
         matches.enumerated().map { i, m -> CGFloat in
             let w = style.weight.font, d = style.design.font
@@ -135,23 +151,25 @@ enum PlanStage {
             // a busy background — where an approximate size beats none.
             if let measured = ink[safe: i] ?? nil, measured.rect.height * px.height > 1 {
                 return inkFittedFontSize(for: m.text, weight: w, design: d, matchedFamily: family,
+                                         weightBoost: weightBoost,
                                          fitting: CGSize(width: measured.rect.width * px.width,
                                                          height: measured.rect.height * px.height))
             }
             let box = CGSize(width: m.rect.width * px.width, height: m.rect.height * px.height)
             return effectiveFontSize(for: m.text, weight: w, design: d, matchedFamily: family,
-                                     fitting: box)
+                                     weightBoost: weightBoost, fitting: box)
         }
     }
 
     /// Spacing is fitted after the sizes, because it depends on the font at its final size.
     static func fitTrackings(matches: [TextMatch], ink: [InkSample?], sizes: [CGFloat], family: String?,
-                             style: OverlayStyle, pixelSize px: CGSize, imageScale: CGFloat) -> [CGFloat] {
+                             weightBoost: CGFloat, style: OverlayStyle, pixelSize px: CGSize,
+                             imageScale: CGFloat) -> [CGFloat] {
         matches.enumerated().map { i, m -> CGFloat in
             guard let measured = ink[safe: i] ?? nil else { return 0 }
             let size = style.manualSize > 0 ? CGFloat(style.manualSize) * imageScale : (sizes[safe: i] ?? 12)
             let font = matchFont(size: size, weight: style.weight.font,
-                                 design: style.design.font, matchedFamily: family)
+                                 design: style.design.font, matchedFamily: family, weightBoost: weightBoost)
             return inkFittedTracking(for: m.text, font: font, kerning: style.kerning,
                                      inkWidth: measured.rect.width * px.width)
         }
@@ -254,8 +272,8 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
             let blur = style.manualSmoothness.map { CGFloat($0) * plan.imageScale }
                 ?? (plan.smoothness[safe: i] ?? 0) * k
             drawMatchText(m.text, ink: inkRect, box: boxRect, size: size, color: inkColor,
-                          family: plan.matchedFonts[safe: i] ?? nil, tracking: tracking,
-                          blur: blur, style: style, ctx: ctx)
+                          family: plan.matchedFonts[safe: i] ?? nil, weightBoost: plan.weightBoost,
+                          tracking: tracking, blur: blur, style: style, ctx: ctx)
         }
         if style.showBoxes {
             let box = cgColor(hex: style.boxHex, fallback: .systemYellow)
@@ -327,7 +345,7 @@ func configureTextQuality(_ ctx: CGContext) {
 /// Drawn through CTLine rather than NSAttributedString.draw(at:), because draw(at:) positions the
 /// line box and the whole point here is to position the baseline.
 private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFloat, color: CGColor,
-                           family: String?, tracking: CGFloat, blur: CGFloat,
+                           family: String?, weightBoost: CGFloat, tracking: CGFloat, blur: CGFloat,
                            style: OverlayStyle, ctx: CGContext) {
     var font = matchFont(size: size, weight: style.weight.font,
                          design: style.design.font, matchedFamily: family)
@@ -339,6 +357,8 @@ private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFl
         // same synthetic oblique SwiftUI's .italic() falls back to, so preview and export agree.
         else { shear = 0.2 }
     }
+    // After the italic swap, which would otherwise drop the raised weight.
+    if family != nil { font = heavier(font, by: weightBoost) }
 
     var attrs = overlayAttributes(font: font, tracking: tracking, kerning: style.kerning)
     attrs[.foregroundColor] = NSColor(cgColor: color) ?? .black

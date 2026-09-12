@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import CryptoKit
+import CoreText
 import OCRSearchCore
 
 /// `OCRSearchApp --selftest <imagesDir> <outDir>`: renders a fixed set of exports without opening
@@ -20,6 +21,7 @@ import OCRSearchCore
         guard let i = a.firstIndex(of: "--selftest"), a.count > i + 2 else { return }
         guard legacyStyleDecodes() else { print("FAILED: a saved style from an earlier version no longer loads"); exit(1) }
         guard fontDetectionHolds(images: URL(fileURLWithPath: a[i + 1])) else { exit(1) }
+        guard weightBoostRuleHolds() else { exit(1) }
         run(images: URL(fileURLWithPath: a[i + 1]), out: URL(fileURLWithPath: a[i + 2]))
         exit(0)
     }
@@ -38,20 +40,55 @@ import OCRSearchCore
                   let px = imagePixelSize(at: path) else { continue }
             let items = page.allTextBoxes.map { (text: $0.text, rect: $0.rect) }
             let ranking = rankFonts(forImage: items, path: path, pixelSize: px)
-            let reported = bestMatchingFont(forImage: items, path: path, pixelSize: px)
+            let detection = detectedFont(forImage: items, path: path, pixelSize: px)
+            let reported = detection?.family
             let top = ranking.prefix(3).map { "\($0.family) \(String(format: "%.3f", $0.score))" }.joined(separator: ", ")
             print("font \(name): \(top) -> \(reported ?? "no match")")
             guard name.hasPrefix("IMG_"), name.lowercased().hasSuffix(".png") else { continue }
             screenshots += 1
             let winner = ranking.first?.family
             let right = expected.map { winner == $0 } ?? winner.map(isSystemFont) ?? false
-            if !right || reported != systemFontReplacement {
+            if !right || reported != systemFontReplacement || detection?.standsInForSystemFont != true {
                 wrong.append("\(name): ranked \(winner ?? "nothing") first, reported \(reported ?? "no match")")
             }
         }
         print("font detection: \(screenshots - wrong.count)/\(screenshots) screenshots ranked \(expected ?? "an SF family") first and reported \(systemFontReplacement)")
         if !wrong.isEmpty { print("FONT DETECTION FAILED:\n  " + wrong.joined(separator: "\n  ")) }
         return wrong.isEmpty
+    }
+
+    /// The heavier weight applies only where Noto Sans stands in for a detected SF font: not when
+    /// Noto Sans is detected in its own right, not when it (or anything) is picked by hand, and not
+    /// with matching off. And it must actually raise Noto Sans's weight axis, regular and bold.
+    static func weightBoostRuleHolds() -> Bool {
+        let standIn = DetectedFont(family: systemFontReplacement, standsInForSystemFont: true)
+        let genuine = DetectedFont(family: systemFontReplacement, standsInForSystemFont: false)
+        var auto = OverlayStyle(); auto.autoFont = true
+        var off = auto; off.autoFont = false
+        var picked = auto; picked.manualFont = systemFontReplacement
+        let rules: [(String, CGFloat, CGFloat)] = [
+            ("stand-in for SF", PlanStage.weightBoost(for: auto, detected: standIn), systemFontReplacementWeightBoost),
+            ("Noto Sans detected itself", PlanStage.weightBoost(for: auto, detected: genuine), 1),
+            ("matching off", PlanStage.weightBoost(for: off, detected: standIn), 1),
+            ("Noto Sans picked by hand", PlanStage.weightBoost(for: picked, detected: standIn), 1),
+            ("nothing detected", PlanStage.weightBoost(for: auto, detected: nil), 1),
+        ]
+        var ok = true
+        for (name, got, want) in rules where got != want {
+            print("FAILED weight rule, \(name): \(got), expected \(want)"); ok = false
+        }
+        let wght = NSNumber(value: 0x77676874)
+        func weight(_ f: NSFont) -> Double? { ((CTFontCopyVariation(f as CTFont) as? [NSNumber: Any])?[wght] as? NSNumber)?.doubleValue }
+        for (bold, from) in [(false, 400.0), (true, 700.0)] {
+            guard let f = NSFontManager.shared.font(withFamily: systemFontReplacement, traits: bold ? .boldFontMask : [],
+                                                    weight: 5, size: 40) else { print("FAILED: no \(systemFontReplacement)"); return false }
+            let got = weight(heavier(f, by: systemFontReplacementWeightBoost)) ?? 0
+            if abs(got - from * Double(systemFontReplacementWeightBoost)) > 0.5 {
+                print("FAILED: \(systemFontReplacement) \(bold ? "bold" : "regular") weight \(got), expected \(from * 1.05)"); ok = false
+            }
+        }
+        if ok { print("weight boost: only for the SF stand-in, \(systemFontReplacement) 400->420 and 700->735") }
+        return ok
     }
 
     /// A per-image style as saved by earlier versions — with the old Boxes-or-Text `mode` and
@@ -182,12 +219,13 @@ import OCRSearchCore
             ("switches", { $0.showBoxes.toggle(); $0.showText.toggle() }, { $0.showBoxes = target.showBoxes; $0.showText = target.showText }),
         ]
         func check(_ s: OverlayStyle, _ step: String) {
-            let family = PlanStage.family(for: s) { model.detectedFont }
+            let family = PlanStage.family(for: s) { model.detection?.family }
+            let boost = PlanStage.weightBoost(for: s, detected: model.detection)
             let sizes = PlanStage.fitSizes(matches: model.matches, ink: model.ink, family: family,
-                                           style: s, pixelSize: model.pixelSize)
+                                           weightBoost: boost, style: s, pixelSize: model.pixelSize)
             let trackings = PlanStage.fitTrackings(matches: model.matches, ink: model.ink, sizes: sizes,
-                                                   family: family, style: s, pixelSize: model.pixelSize,
-                                                   imageScale: model.imageScale)
+                                                   family: family, weightBoost: boost, style: s,
+                                                   pixelSize: model.pixelSize, imageScale: model.imageScale)
             // Within a millionth of a point: CoreText's measurements wobble in the ninth digit from
             // one call to the next for the same font and text. A stale value is off by far more.
             func same(_ a: [CGFloat], _ b: [CGFloat]) -> Bool {
@@ -195,6 +233,7 @@ import OCRSearchCore
             }
             var wrong: [String] = []
             if model.family != family { wrong.append("family") }
+            if model.weightBoost != boost { wrong.append("weight") }
             if !same(model.fontSizes, sizes) { wrong.append("sizes") }
             if !same(model.trackings, trackings) { wrong.append("spacing") }
             if model.drawingStyle != s { wrong.append("style") }

@@ -59,6 +59,32 @@ private func isMonospace(_ family: String) -> Bool {
 /// registerBundledFonts(), so it's available even on a machine that never installed it.
 let systemFontReplacement = "Noto Sans"
 
+/// How much heavier the overlay is drawn when systemFontReplacement stands in for a detected SF
+/// family: Noto Sans reads lighter than SF at the same weight, so its weight axis is raised by 5%
+/// (regular 400 -> 420, bold 700 -> 735). Only for that stand-in — not when Noto Sans is detected
+/// in its own right, and not when it is picked by hand.
+let systemFontReplacementWeightBoost: CGFloat = 1.05
+
+/// `font` with its weight axis multiplied by `factor`, within the axis's range. Only variable
+/// fonts have that axis; anything else comes back unchanged. Keeps the rest of the font —
+/// style, italic, size — as it was.
+func heavier(_ font: NSFont, by factor: CGFloat) -> NSFont {
+    guard factor != 1 else { return font }
+    let ct = font as CTFont
+    let wght = 0x77676874   // 'wght'
+    guard let axis = (CTFontCopyVariationAxes(ct) as? [[CFString: Any]])?
+              .first(where: { ($0[kCTFontVariationAxisIdentifierKey] as? NSNumber)?.intValue == wght }),
+          let fallback = (axis[kCTFontVariationAxisDefaultValueKey] as? NSNumber)?.doubleValue,
+          let lowest = (axis[kCTFontVariationAxisMinimumValueKey] as? NSNumber)?.doubleValue,
+          let highest = (axis[kCTFontVariationAxisMaximumValueKey] as? NSNumber)?.doubleValue else { return font }
+    // A font at its default instance (Noto Sans Regular) reports no variation at all.
+    let current = ((CTFontCopyVariation(ct) as? [NSNumber: Any])?[NSNumber(value: wght)] as? NSNumber)?.doubleValue ?? fallback
+    let target = min(max(current * Double(factor), lowest), highest)
+    let descriptor = CTFontDescriptorCreateCopyWithVariation(CTFontCopyFontDescriptor(ct),
+                                                             NSNumber(value: wght) as CFNumber, CGFloat(target))
+    return CTFontCreateWithFontDescriptor(descriptor, font.pointSize, nil) as NSFont
+}
+
 /// True for Apple's system UI font and its SF-branded family members (SF Pro, SF Mono, SF
 /// Compact, ...).
 func isSystemFont(_ family: String) -> Bool {
@@ -101,18 +127,33 @@ private let maxScoredLines = 20
 /// apart at this size, and it keeps the comparison to a fraction of a second per image.
 private let comparisonHeight: CGFloat = 32
 
+/// What font detection settled on for an image.
+struct DetectedFont: Sendable, Equatable {
+    /// The family to draw in.
+    var family: String
+    /// Whether `family` is systemFontReplacement standing in for an SF family that won — the one
+    /// case drawn systemFontReplacementWeightBoost heavier.
+    var standsInForSystemFont: Bool
+}
+
 /// Best-guess installed font family for a whole image, or nil if nothing matches well enough.
 ///
 /// When the winner is one of Apple's SF families, systemFontReplacement is returned in its place:
 /// that is a deliberate choice, not a detection result, so rankFonts still reports the SF family.
-func bestMatchingFont(forImage items: [(text: String, rect: CGRect)], path: String, pixelSize: CGSize,
-                      from families: [String] = candidateFontFamilies()) -> String? {
+func detectedFont(forImage items: [(text: String, rect: CGRect)], path: String, pixelSize: CGSize,
+                from families: [String] = candidateFontFamilies()) -> DetectedFont? {
     guard let winner = rankFonts(forImage: items, path: path, pixelSize: pixelSize, from: families).first,
           winner.score >= minimumShapeScore else { return nil }
     if isSystemFont(winner.family), NSFontManager.shared.availableFontFamilies.contains(systemFontReplacement) {
-        return systemFontReplacement
+        return DetectedFont(family: systemFontReplacement, standsInForSystemFont: true)
     }
-    return winner.family
+    return DetectedFont(family: winner.family, standsInForSystemFont: false)
+}
+
+/// The family detectedFont settles on, without saying whether it is a stand-in.
+func bestMatchingFont(forImage items: [(text: String, rect: CGRect)], path: String, pixelSize: CGSize,
+                      from families: [String] = candidateFontFamilies()) -> String? {
+    detectedFont(forImage: items, path: path, pixelSize: pixelSize, from: families)?.family
 }
 
 /// Every candidate family that could be scored, best first, by how closely its letter shapes match
@@ -245,12 +286,13 @@ private func correlation(_ a: [Double], _ b: [Double]) -> Double? {
 /// their cap heights being within 2% of each other) — fitting against the full line height, as
 /// this used to, systematically under-sized any family with generous default leading relative to
 /// what the original text actually looked like.
-private func fitBoth(text: String, family: String, bold: Bool, box: CGSize) -> CGFloat {
-    guard let base = nsFont(family: family, bold: bold, size: 100), supportsCharacters(in: text, font: base) else { return 4 }
+private func fitBoth(text: String, family: String, bold: Bool, weightBoost: CGFloat, box: CGSize) -> CGFloat {
+    guard let plain = nsFont(family: family, bold: bold, size: 100), supportsCharacters(in: text, font: plain) else { return 4 }
+    let base = heavier(plain, by: weightBoost)
     let capRatio = base.capHeight / 100
     guard capRatio > 0 else { return 4 }
     var size = box.height / capRatio
-    if let f = nsFont(family: family, bold: bold, size: size) {
+    if let f = nsFont(family: family, bold: bold, size: size).map({ heavier($0, by: weightBoost) }) {
         let width = (text as NSString).size(withAttributes: [.font: f]).width
         // Vision's box is a tight fit around the *original* font's glyphs; a substitute family
         // at the same cap height routinely needs a bit more horizontal room for the same text
@@ -267,9 +309,9 @@ private func fitBoth(text: String, family: String, bold: Bool, box: CGSize) -> C
 /// The font size MatchView actually renders a match's text at: fit to the auto-matched family
 /// when auto-font is on and a match was found, otherwise fit to the manually chosen design.
 func effectiveFontSize(for text: String, weight: Font.Weight, design: Font.Design,
-                        matchedFamily: String?, fitting box: CGSize) -> CGFloat {
+                        matchedFamily: String?, weightBoost: CGFloat = 1, fitting box: CGSize) -> CGFloat {
     if let family = matchedFamily {
-        return fitBoth(text: text, family: family, bold: weight == .bold, box: box)
+        return fitBoth(text: text, family: family, bold: weight == .bold, weightBoost: weightBoost, box: box)
     }
     return fittedFontSize(for: text, weight: weight, design: design, fitting: box)
 }
@@ -347,11 +389,12 @@ let trackingLimit: CGFloat = 0.12
 /// There is no separate "is auto-matching on" flag here on purpose. Whether the family came from
 /// matching the image or from the user picking one is the caller's business; all that matters
 /// here is whether there is a family to use. A nil family *is* the instruction to fall back.
+/// `weightBoost` makes the matched family heavier (see systemFontReplacementWeightBoost).
 func matchFont(size: CGFloat, weight: Font.Weight, design: Font.Design,
-               matchedFamily: String?) -> NSFont {
+               matchedFamily: String?, weightBoost: CGFloat = 1) -> NSFont {
     if let family = matchedFamily,
        let f = NSFont(name: renderableFontName(family: family, bold: weight == .bold), size: size) {
-        return f
+        return heavier(f, by: weightBoost)
     }
     return nsFont(size: size, weight: weight, design: design)
 }
@@ -365,9 +408,10 @@ func matchFont(size: CGFloat, weight: Font.Weight, design: Font.Design,
 /// it, so solving a size from its height made every overlay that much too large — visibly so on
 /// short strings, which never trip the width limit that was accidentally correcting the long ones.
 func inkFittedFontSize(for text: String, weight: Font.Weight, design: Font.Design,
-                       matchedFamily: String?, fitting ink: CGSize) -> CGFloat {
+                       matchedFamily: String?, weightBoost: CGFloat = 1, fitting ink: CGSize) -> CGFloat {
     guard !text.isEmpty, ink.width > 1, ink.height > 1 else { return 4 }
-    let probe = matchFont(size: 100, weight: weight, design: design, matchedFamily: matchedFamily)
+    let probe = matchFont(size: 100, weight: weight, design: design, matchedFamily: matchedFamily,
+                          weightBoost: weightBoost)
     let b = glyphBounds(of: text, font: probe)
     guard b.height > 1, b.width > 1 else { return 4 }
     var size = 100 * ink.height / b.height

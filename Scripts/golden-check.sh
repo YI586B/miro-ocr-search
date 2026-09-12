@@ -19,7 +19,7 @@ fi
 new=$(mktemp -d)
 status=0
 .build/release/OCRSearchApp --selftest miro-files "$new" > "$new.log" || status=1
-grep -E "^font |font detection|FONT DETECTION|^  IMG" "$new.log"; grep -A30 "preview runs" "$new.log" || tail -5 "$new.log"
+grep -E "^font |font detection|FONT DETECTION|^  IMG|weight boost|FAILED" "$new.log"; grep -A30 "preview runs" "$new.log" || tail -5 "$new.log"
 # Numbers match within a millionth (CoreText's measurements wobble in the ninth digit between
 # calls); text, fonts and PNG hashes must match exactly.
 for d in "$base"/*/; do
