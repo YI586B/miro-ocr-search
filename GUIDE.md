@@ -29,7 +29,8 @@ exception is exporting to Miro, which is an upload and needs a token.
 
 ## Installing a release
 
-Releases live on the **`release` branch**, not in the main line of the repository.
+Releases live on the **`release` branch**, not in the main line of the repository. It holds only
+the latest disk image; older ones are removed when a new release goes up.
 
 1. Open the [`release` branch](https://github.com/YI586B/miro-ocr-search/tree/release) and
    download `Miro-ocr-search-<version>.dmg`.
