@@ -60,10 +60,10 @@ private func isMonospace(_ family: String) -> Bool {
 let systemFontReplacement = "Noto Sans"
 
 /// How much heavier the overlay is drawn when systemFontReplacement stands in for a detected SF
-/// family: Noto Sans reads lighter than SF at the same weight, so its weight axis is raised by 5%
-/// (regular 400 -> 420, bold 700 -> 735). Only for that stand-in — not when Noto Sans is detected
+/// family: Noto Sans reads lighter than SF at the same weight, so its weight axis is raised by 30%
+/// (regular 400 -> 520; bold 700 -> 900, the axis's maximum). Only for that stand-in — not when Noto Sans is detected
 /// in its own right, and not when it is picked by hand.
-let systemFontReplacementWeightBoost: CGFloat = 1.05
+let systemFontReplacementWeightBoost: CGFloat = 1.30
 
 /// `font` with its weight axis multiplied by `factor`, within the axis's range. Only variable
 /// fonts have that axis; anything else comes back unchanged. Keeps the rest of the font —

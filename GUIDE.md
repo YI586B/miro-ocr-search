@@ -149,7 +149,7 @@ Two separate switches, both on by default. They are in the preview toolbar's **O
 (click the button itself to hide or show the whole overlay; use its arrow for the switches) and in
 the **View** menu (**Show Boxes**, **Show Text**).
 
-- **Boxes** draws a translucent rectangle over each match.
+- **Boxes** draws an outline around each match. Its fill starts at 0%; the style panel's **Fill opacity** adds a translucent fill.
 - **Text** covers each match with a patch matching the background and redraws the word on top.
 
 With both on, the box is drawn over the redrawn text. Text is where the matching work happens.
@@ -178,7 +178,7 @@ From those:
 
 | what | how it is decided |
 |---|---|
-| **Font** | every candidate family is compared by letter shape against the whole page, not just the matched words: each line is drawn in the candidate over the glyphs measured off the image, and the closest wins. If nothing is close enough (a photo, a custom typeface) there is no match and the Font and Weight settings apply. If the winner is the system font (SF), Noto Sans is used instead; it ships with the app, and in that case only it is drawn 5% heavier (weight 400 → 420, bold 700 → 735), since it reads lighter than SF. |
+| **Font** | every candidate family is compared by letter shape against the whole page, not just the matched words: each line is drawn in the candidate over the glyphs measured off the image, and the closest wins. If nothing is close enough (a photo, a custom typeface) there is no match and the Font and Weight settings apply. If the winner is the system font (SF), Noto Sans is used instead; it ships with the app, and in that case only it is drawn 30% heavier (weight 400 → 520; bold 700 → 900, the font's maximum), since it reads lighter than SF. |
 | **Size** | scaled so the string's glyph outlines match the measured ink height. |
 | **Spacing** | letter spacing set so the redrawn word spans the measured ink width. This is what stops a substitute font drifting across a word — on Verdana it is the difference between +8.7% too wide and −0.4%. |
 | **Smoothness** | blurred to the softness measured on the original, and left alone when the original is already the crisper of the two, since sharpening is not possible. |

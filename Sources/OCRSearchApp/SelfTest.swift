@@ -83,11 +83,16 @@ import OCRSearchCore
             guard let f = NSFontManager.shared.font(withFamily: systemFontReplacement, traits: bold ? .boldFontMask : [],
                                                     weight: 5, size: 40) else { print("FAILED: no \(systemFontReplacement)"); return false }
             let got = weight(heavier(f, by: systemFontReplacementWeightBoost)) ?? 0
-            if abs(got - from * Double(systemFontReplacementWeightBoost)) > 0.5 {
-                print("FAILED: \(systemFontReplacement) \(bold ? "bold" : "regular") weight \(got), expected \(from * 1.05)"); ok = false
+            // Noto Sans's weight axis stops at 900.
+            let expected = min(from * Double(systemFontReplacementWeightBoost), 900)
+            if abs(got - expected) > 0.5 {
+                print("FAILED: \(systemFontReplacement) \(bold ? "bold" : "regular") weight \(got), expected \(expected)"); ok = false
             }
         }
-        if ok { print("weight boost: only for the SF stand-in, \(systemFontReplacement) 400->420 and 700->735") }
+        if ok {
+            let r = min(400 * Double(systemFontReplacementWeightBoost), 900), b = min(700 * Double(systemFontReplacementWeightBoost), 900)
+            print("weight boost: only for the SF stand-in, \(systemFontReplacement) 400->\(Int(r)) and 700->\(Int(b))")
+        }
         return ok
     }
 

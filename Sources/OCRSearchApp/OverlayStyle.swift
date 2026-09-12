@@ -71,7 +71,7 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     var showBoxes = true
     var showText = true
     var boxHex = HL.defaultBox
-    var opacity = 0.35
+    var opacity = 0.0
     var outline = true
     var textHex = HL.defaultText
     var autoTextColor = true
