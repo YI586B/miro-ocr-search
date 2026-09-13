@@ -149,7 +149,8 @@ enum PlanStage {
             // Fit to the ink measured off the image when there is any. Vision's box is the
             // fallback for a match whose glyphs could not be isolated — a blank box, or text on
             // a busy background — where an approximate size beats none.
-            if let measured = ink[safe: i] ?? nil, measured.rect.height * px.height > 1 {
+            // Only ink that was isolated from its surroundings; see InkSample.isolated.
+            if let measured = ink[safe: i] ?? nil, measured.isolated, measured.rect.height * px.height > 1 {
                 return inkFittedFontSize(for: m.text, weight: w, design: d, matchedFamily: family,
                                          weightBoost: weightBoost,
                                          fitting: CGSize(width: measured.rect.width * px.width,
@@ -166,7 +167,7 @@ enum PlanStage {
                              weightBoost: CGFloat, style: OverlayStyle, pixelSize px: CGSize,
                              imageScale: CGFloat) -> [CGFloat] {
         matches.enumerated().map { i, m -> CGFloat in
-            guard let measured = ink[safe: i] ?? nil else { return 0 }
+            guard let measured = ink[safe: i] ?? nil, measured.isolated else { return 0 }
             let size = style.manualSize > 0 ? CGFloat(style.manualSize) * imageScale : (sizes[safe: i] ?? 12)
             let font = matchFont(size: size, weight: style.weight.font,
                                  design: style.design.font, matchedFamily: family, weightBoost: weightBoost)
@@ -261,7 +262,7 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
             let measured = plan.ink[safe: i] ?? nil
             let inkColor = (style.autoTextColor ? measured?.color : nil)
                 .map(cgColor) ?? cgColor(hex: style.textHex, fallback: .black)
-            let inkRect = measured.map {
+            let inkRect = measured.flatMap { $0.isolated ? $0 : nil }.map {
                 CGRect(x: $0.rect.minX * w, y: $0.rect.minY * h,
                        width: $0.rect.width * w, height: $0.rect.height * h)
             }

@@ -168,12 +168,20 @@ describes that one instance: which match it is, its size, the font, its colours 
 Everything is measured off the image rather than assumed. For each match the app scans the pixels
 inside the match and works out:
 
-- **where the glyphs actually are** — Vision's bounding box is not a tight wrap; measured, it runs
-  8–11% taller than the ink inside it and starts several pixels to the left
+- **the background colour** — the most common colour in a thin ring just outside the match, so
+  neighbouring words and lines do not tint it
 - **the ink colour** — the most common colour among the solid interior of the strokes, not an
   average that would drag white text toward grey
-- **the background colour** — sampled immediately around the match
+- **where the glyphs actually are** — only pixels on the way from the background to the ink colour
+  count, so the texture of a photo behind the letters is left out. Vision's bounding box is not a
+  tight wrap; measured, it runs 8–11% taller than the ink inside it and starts several pixels to
+  the left
 - **how soft the edges are** — the distance a stroke takes to climb from 20% to 80% of its contrast
+
+If the letters cannot be told apart from what is behind them (the ink fills Vision's box), the
+redrawn word is sized and placed by Vision's box instead and is not blurred. A word inside a long
+unbroken string, such as a URL, is placed by its share of the line's width, because Vision gives
+it the whole line's box.
 
 From those:
 

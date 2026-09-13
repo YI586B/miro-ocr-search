@@ -15,12 +15,61 @@ func imagePointScale(at path: String) -> CGFloat {
     return max(1, (dpi / 72).rounded())
 }
 
+/// The background immediately around a box: the most common colour in a thin ring just outside
+/// it, as (r, g, b) in 0...1. `box` is in bitmap pixels, top-left origin.
+///
+/// This replaced averaging four points, one past the middle of each edge at 15% of the box's size.
+/// In running text those points land on the neighbouring words and on the lines above and below,
+/// and on a white page black text averaged in turns the "background" grey. Measured against that
+/// grey, white paper is as far off as black ink, so the ink could come out white and the patch
+/// grey — dark text redrawn light — and every measurement built on the background went with it.
+/// A ring touches neighbours only in places, so the colour it shows most is still the background.
+///
+/// Colours are grouped at 1/16 steps per channel to find the most common one, then averaged within
+/// that group, so a flat background comes back exactly and a slightly noisy one still has a clear
+/// winner.
+func ringBackground(_ rep: NSBitmapImageRep, box: CGRect) -> (r: CGFloat, g: CGFloat, b: CGFloat)? {
+    let w = rep.pixelsWide, h = rep.pixelsHigh
+    let margin = 2, thickness = max(2, Int((box.height * 0.06).rounded()))
+    let inner = box.insetBy(dx: CGFloat(-margin), dy: CGFloat(-margin))
+    let outer = inner.insetBy(dx: CGFloat(-thickness), dy: CGFloat(-thickness))
+    let x0 = max(Int(outer.minX), 0), x1 = min(Int(outer.maxX), w - 1)
+    let y0 = max(Int(outer.minY), 0), y1 = min(Int(outer.maxY), h - 1)
+    guard x1 > x0, y1 > y0 else { return nil }
+    let perimeter = 2 * ((x1 - x0) + (y1 - y0)) * thickness
+    let step = max(1, perimeter / 4000)
+    var groups: [Int: (n: Int, r: CGFloat, g: CGFloat, b: CGFloat)] = [:]
+    var k = 0
+    for y in y0...y1 {
+        for x in x0...x1 {
+            if CGFloat(x) >= inner.minX, CGFloat(x) < inner.maxX, CGFloat(y) >= inner.minY, CGFloat(y) < inner.maxY { continue }
+            k += 1
+            guard k % step == 0, let c = rep.colorAt(x: x, y: y) else { continue }
+            let key = (Int(c.redComponent * 15.99) << 8) | (Int(c.greenComponent * 15.99) << 4) | Int(c.blueComponent * 15.99)
+            let e = groups[key] ?? (0, 0, 0, 0)
+            groups[key] = (e.n + 1, e.r + c.redComponent, e.g + c.greenComponent, e.b + c.blueComponent)
+        }
+    }
+    guard let top = groups.values.max(by: { $0.n < $1.n }), top.n > 0 else { return nil }
+    let n = CGFloat(top.n)
+    return (top.r / n, top.g / n, top.b / n)
+}
+
+/// A normalised, bottom-left-origin rect (Vision's) in bitmap pixels, top-left origin.
+private func pixelBox(_ rect: CGRect, width w: Int, height h: Int) -> CGRect {
+    CGRect(x: rect.minX * CGFloat(w), y: (1 - rect.maxY) * CGFloat(h),
+           width: rect.width * CGFloat(w), height: rect.height * CGFloat(h))
+}
+
+private func colorComponents(_ c: Color) -> (r: CGFloat, g: CGFloat, b: CGFloat) {
+    let n = NSColor(c)
+    return (n.redComponent, n.greenComponent, n.blueComponent)
+}
+
 /// Approximate the image's background color immediately around each match box, so text-overlay
 /// mode can paint the redrawn word over a same-colored patch instead of just floating on top of
-/// the original characters. Samples just outside the box on all four sides — at the midpoint of
-/// each edge, offset outward by a small margin so it lands past any anti-aliased glyph pixel,
-/// never inside the box itself — and averages them; falls back to `nil` (caller uses its own
-/// default) if the image can't be read as a bitmap.
+/// the original characters: the most common colour just outside the box (see ringBackground).
+/// Falls back to `nil` (caller uses its own default) if the image can't be read as a bitmap.
 ///
 /// Deliberately does NOT call `.usingColorSpace(.sRGB)` on the sampled NSColor: colorAt(x:y:)
 /// returns components already tagged NSCalibratedRGBColorSpace that numerically match the raw
@@ -35,24 +84,8 @@ func sampledBackgroundColors(at path: String, rects: [CGRect]) -> [Color?] {
     let w = rep.pixelsWide, h = rep.pixelsHigh
     guard w > 0, h > 0 else { return Array(repeating: nil, count: rects.count) }
     func sample(_ rect: CGRect) -> Color? {
-        // Vision rects are normalised with origin bottom-left; bitmap pixel rows run top-down.
-        let x0 = rect.minX, x1 = rect.maxX
-        let yTop = 1 - rect.maxY, yBottom = 1 - rect.minY
-        let midX = (x0 + x1) / 2, midY = (yTop + yBottom) / 2
-        let marginX = max((x1 - x0) * 0.15, 2 / CGFloat(w)), marginY = max((yBottom - yTop) * 0.15, 2 / CGFloat(h))
-        let points: [(CGFloat, CGFloat)] = [
-            (midX, yTop - marginY), (midX, yBottom + marginY),   // just above, just below
-            (x0 - marginX, midY), (x1 + marginX, midY)           // just left, just right
-        ]
-        var r = 0.0, g = 0.0, b = 0.0, n = 0.0
-        for (nx, ny) in points {
-            let px = min(max(Int(nx * CGFloat(w)), 0), w - 1)
-            let py = min(max(Int(ny * CGFloat(h)), 0), h - 1)
-            guard let c = rep.colorAt(x: px, y: py) else { continue }
-            r += c.redComponent; g += c.greenComponent; b += c.blueComponent; n += 1
-        }
-        guard n > 0 else { return nil }
-        return Color(.sRGB, red: r / n, green: g / n, blue: b / n, opacity: 1)
+        guard let bg = ringBackground(rep, box: pixelBox(rect, width: w, height: h)) else { return nil }
+        return Color(.sRGB, red: bg.r, green: bg.g, blue: bg.b, opacity: 1)
     }
     return rects.map(sample)
 }
@@ -91,7 +124,21 @@ struct InkSample: Sendable {
     /// pixel grid, more for text that has been through a resample — IMG_0849 is a 12% upscale of a
     /// smaller image and measures ~1.55 where a native one measures ~1.39.
     var edgeRise: CGFloat = 0
+    /// Whether the glyphs were actually told apart from what is behind them. Not when the ink
+    /// fills Vision's box — then `rect` is the box, not the letters (text over a photo, where the
+    /// texture around the letters differs from the background as much as they do). Fitting and
+    /// placing fall back to Vision's box, and nothing is blurred, rather than trusting it.
+    var isolated: Bool = true
 }
+
+/// Above this, a measured edge softness is not believed: text that soft has not been seen on a
+/// real capture (native screenshots measure ~1.4px, a 12% upscale ~1.55px), and values like it come
+/// from measuring across something that is not a clean glyph edge.
+let maximumTrustedEdgeRise: CGFloat = 2.5
+
+/// Ink that fills this share of Vision's box's height or more was not isolated from its
+/// surroundings. Clean text measures 0.81-0.90 of the box.
+let isolatedInkHeightLimit: CGFloat = 0.97
 
 /// Approximate the color of the text itself within each match box, for text-overlay mode to draw
 /// the redrawn word in — rather than always using the manually picked Font color. Samples a grid
@@ -107,23 +154,12 @@ func sampledInk(at path: String, rects: [CGRect]) -> [InkSample?] {
     let rep = NSBitmapImageRep(cgImage: cg)
     let w = rep.pixelsWide, h = rep.pixelsHigh
     guard w > 0, h > 0 else { return Array(repeating: nil, count: rects.count) }
-    func colorAt(_ nx: CGFloat, _ ny: CGFloat) -> NSColor? {
-        let px = min(max(Int(nx * CGFloat(w)), 0), w - 1)
-        let py = min(max(Int(ny * CGFloat(h)), 0), h - 1)
-        return rep.colorAt(x: px, y: py)
-    }
     func sample(_ rect: CGRect) -> InkSample? {
         // Vision rects are normalised with origin bottom-left; bitmap pixel rows run top-down.
         let x0 = rect.minX, x1 = rect.maxX
         let yTop = 1 - rect.maxY, yBottom = 1 - rect.minY
-        let midX = (x0 + x1) / 2, midY = (yTop + yBottom) / 2
-        let marginX = max((x1 - x0) * 0.15, 2 / CGFloat(w)), marginY = max((yBottom - yTop) * 0.15, 2 / CGFloat(h))
-        let bg = [colorAt(midX, yTop - marginY), colorAt(midX, yBottom + marginY),
-                  colorAt(x0 - marginX, midY), colorAt(x1 + marginX, midY)].compactMap { $0 }
-        guard !bg.isEmpty else { return nil }
-        let bgR = bg.map(\.redComponent).reduce(0, +) / CGFloat(bg.count)
-        let bgG = bg.map(\.greenComponent).reduce(0, +) / CGFloat(bg.count)
-        let bgB = bg.map(\.blueComponent).reduce(0, +) / CGFloat(bg.count)
+        guard let bg = ringBackground(rep, box: pixelBox(rect, width: w, height: h)) else { return nil }
+        let (bgR, bgG, bgB) = bg
 
         // Walk the box's pixels rather than a 6x6 grid of them. Most of any match box is
         // background — text has gaps, and glyphs are thin — so a grid that coarse landed only a
@@ -189,19 +225,35 @@ func sampledInk(at path: String, rects: [CGRect]) -> [InkSample?] {
                           blue: core.reduce(0) { $0 + $1.b } / n, opacity: 1)
         }
 
-        // The box those glyphs actually occupy. Taken at a quarter of the peak distance — about
-        // halfway up the antialiased ramp, which is where a glyph's edge visually is — rather
-        // than at the peak, since the extent has to include the softened outside of a stroke, not
-        // just its solid middle.
+        // How far each pixel is along the way from the background to the ink colour (0 to 1), and
+        // how far off that line it lies. Letters are on the line; over a photo, the texture around
+        // them mostly is not — skin and hair differ from the background as much as the ink does,
+        // but in another direction — which is what lets them be left out of the ink.
+        let ink = colorComponents(color)
+        let axis = (r: ink.r - bgR, g: ink.g - bgG, b: ink.b - bgB)
+        let axisLength2 = max(axis.r * axis.r + axis.g * axis.g + axis.b * axis.b, 1e-6)
+        func along(_ c: (r: CGFloat, g: CGFloat, b: CGFloat)) -> (t: CGFloat, off: CGFloat) {
+            let d = (r: c.r - bgR, g: c.g - bgG, b: c.b - bgB)
+            let dot = d.r * axis.r + d.g * axis.g + d.b * axis.b
+            let dist2 = d.r * d.r + d.g * d.g + d.b * d.b
+            return (dot / axisLength2, max(0, dist2 - dot * dot / axisLength2).squareRoot() / axisLength2.squareRoot())
+        }
+
+        // The box those glyphs actually occupy. Taken part way up the antialiased ramp — see
+        // inkEdgeFraction, which is a fraction of the squared distance, so of the way along it is
+        // its square root — rather than at the peak, since the extent has to include the softened
+        // outside of a stroke, not just its solid middle.
         //
         // This is the measurement the overlay is sized and placed against, and it is why:
         // Vision's box is NOT a tight wrap around the glyphs, whatever its reputation. Measured
         // on IMG_0849 it runs 8-11% taller than the ink inside it and starts several pixels to
         // the left, so deriving a font size from the box's height came out that much too big and
         // deriving a left edge from the box's edge started that much too early.
-        let edge = peak * inkEdgeFraction
+        let edge = inkEdgeFraction.squareRoot()
         var minX = Int.max, maxX = Int.min, minY = Int.max, maxY = Int.min
-        for c in candidates where c.distance >= edge {
+        for c in candidates {
+            let a = along((c.r, c.g, c.b))
+            guard a.t >= edge, a.off <= 0.35 else { continue }
             minX = min(minX, c.x); maxX = max(maxX, c.x)
             minY = min(minY, c.y); maxY = max(maxY, c.y)
         }
@@ -211,16 +263,17 @@ func sampledInk(at path: String, rects: [CGRect]) -> [InkSample?] {
                              y: 1 - CGFloat(maxY + step) / CGFloat(h),
                              width: CGFloat(maxX + step - minX) / CGFloat(w),
                              height: CGFloat(maxY + step - minY) / CGFloat(h))
+        let boxHeight = CGFloat(pxY1 - pxY0 + 1)
+        let isolated = CGFloat(maxY + step - minY) < boxHeight * isolatedInkHeightLimit
         // Edge softness, from the same rows: for each horizontal run that climbs from background
         // to ink, how far it takes to go from 20% to 80% of the way. Measured here because this is
         // the one place that already knows where the ink is and what it contrasts against.
         var rises: [CGFloat] = []
-        for py in stride(from: max(minY, pxY0), through: min(maxY, pxY1), by: step) {
+        for py in stride(from: max(minY, pxY0), through: min(maxY, pxY1), by: step) where isolated {
             var row: [CGFloat] = []
             for px in stride(from: minX, through: maxX, by: step) {
                 guard let c = rep.colorAt(x: px, y: py) else { row.append(0); continue }
-                let dr = c.redComponent - bgR, dg = c.greenComponent - bgG, db = c.blueComponent - bgB
-                row.append((dr * dr + dg * dg + db * db).squareRoot())
+                row.append(max(0, along((c.redComponent, c.greenComponent, c.blueComponent)).t))
             }
             guard let hi = row.max(), hi > 0.05 else { continue }
             let t20 = hi * 0.2, t80 = hi * 0.8
@@ -233,8 +286,10 @@ func sampledInk(at path: String, rects: [CGRect]) -> [InkSample?] {
                 }
             }
         }
-        let rise = rises.isEmpty ? 0 : rises.reduce(0, +) / CGFloat(rises.count)
-        return InkSample(rect: inkRect, color: color, edgeRise: rise)
+        let measured = rises.isEmpty ? 0 : rises.reduce(0, +) / CGFloat(rises.count)
+        // Only a softness measured on isolated letters, and a believable one, is matched.
+        let rise = isolated && measured <= maximumTrustedEdgeRise ? measured : 0
+        return InkSample(rect: isolated ? inkRect : rect, color: color, edgeRise: rise, isolated: isolated)
     }
     return rects.map(sample)
 }

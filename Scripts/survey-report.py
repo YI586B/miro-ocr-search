@@ -48,9 +48,16 @@ runs = [load(d) for d in sys.argv[1:3]]
 for d, rows in zip(sys.argv[1:3], runs):
     show(d, summary(rows))
 if len(runs) == 2:
-    key = lambda r: (r['image'], r['word'], r['match'])
-    before = {key(r): r for r in runs[0]}
-    pairs = [(float(a['similarity']) - float(before[key(a)]['similarity']), a) for a in runs[1] if key(a) in before]
+    # A word can match more than once on an image: pair them up in order of appearance.
+    def keyed(rows):
+        seen, out = {}, {}
+        for r in rows:
+            k = (r['image'], r['word'], r['match'])
+            seen[k] = seen.get(k, 0) + 1
+            out[k + (seen[k],)] = r
+        return out
+    before, after = keyed(runs[0]), keyed(runs[1])
+    pairs = [(float(a['similarity']) - float(before[k]['similarity']), a) for k, a in after.items() if k in before]
     pairs.sort(key=lambda p: p[0])
     print('\nmost worse:')
     for d, r in pairs[:8]:
