@@ -126,10 +126,10 @@ import OCRSearchCore
         var manual = OverlayStyle()
         manual.showBoxes = false; manual.autoFont = false; manual.manualFont = "Helvetica"
         manual.manualSize = 14; manual.manualTracking = 0.3; manual.manualSmoothness = 0.4
-        manual.kerning = false; manual.weight = .bold; manual.italic = true
+        manual.kerning = false; manual.weight = .bold; manual.autoWeight = false; manual.italic = true
         manual.autoBg = false; manual.bgHex = "#EEEEEE"; manual.autoTextColor = false; manual.textHex = "#112233"
         var designed = OverlayStyle()
-        designed.showBoxes = false; designed.autoFont = false; designed.design = .serif; designed.weight = .medium
+        designed.showBoxes = false; designed.autoFont = false; designed.design = .serif; designed.weight = .medium; designed.autoWeight = false
         designed.outline = false; designed.opacity = 0.5; designed.boxHex = "#33AAFF"
         var boxesStyled = designed; boxesStyled.showBoxes = true; boxesStyled.showText = false
         return [
@@ -208,7 +208,7 @@ import OCRSearchCore
         if restyled {
             first.showBoxes.toggle(); first.showText = true; first.autoFont.toggle()
             first.manualFont = target.manualFont.isEmpty ? "Georgia" : ""
-            first.weight = target.weight == .bold ? .regular : .bold
+            first.weight = target.weight == .bold ? .regular : .bold; first.autoWeight.toggle()
             first.design = target.design == .serif ? .system : .serif
             first.kerning.toggle(); first.manualSize = target.manualSize > 0 ? 0 : 20
             first.manualTracking = target.manualTracking == nil ? 1 : nil
@@ -220,16 +220,19 @@ import OCRSearchCore
             ("weight", { $0.weight = $0.weight == .bold ? .regular : .bold }, { $0.weight = target.weight }),
             ("design", { $0.design = $0.design == .serif ? .system : .serif }, { $0.design = target.design }),
             ("autoFont", { $0.autoFont.toggle() }, { $0.autoFont = target.autoFont }),
+            ("autoWeight", { $0.autoWeight.toggle() }, { $0.autoWeight = target.autoWeight }),
             ("manualFont", { $0.manualFont = $0.manualFont.isEmpty ? "Georgia" : "" }, { $0.manualFont = target.manualFont }),
             ("switches", { $0.showBoxes.toggle(); $0.showText.toggle() }, { $0.showBoxes = target.showBoxes; $0.showText = target.showText }),
         ]
         func check(_ s: OverlayStyle, _ step: String) {
             let family = PlanStage.family(for: s) { model.detection?.family }
             let boost = PlanStage.weightBoost(for: s, detected: model.detection)
+            let weights = PlanStage.fitWeights(path: path, matches: model.matches, ink: model.ink, family: family,
+                                               weightBoost: boost, style: s)
             let sizes = PlanStage.fitSizes(matches: model.matches, ink: model.ink, family: family,
-                                           weightBoost: boost, style: s, pixelSize: model.pixelSize)
+                                           weightBoost: boost, weights: weights, style: s, pixelSize: model.pixelSize)
             let trackings = PlanStage.fitTrackings(matches: model.matches, ink: model.ink, sizes: sizes,
-                                                   family: family, weightBoost: boost, style: s,
+                                                   family: family, weightBoost: boost, weights: weights, style: s,
                                                    pixelSize: model.pixelSize, imageScale: model.imageScale)
             // Within a millionth of a point: CoreText's measurements wobble in the ninth digit from
             // one call to the next for the same font and text. A stale value is off by far more.
@@ -238,7 +241,8 @@ import OCRSearchCore
             }
             var wrong: [String] = []
             if model.family != family { wrong.append("family") }
-            if model.weightBoost != boost { wrong.append("weight") }
+            if model.weightBoost != boost { wrong.append("weight boost") }
+            if model.weights != weights { wrong.append("weights") }
             if !same(model.fontSizes, sizes) { wrong.append("sizes") }
             if !same(model.trackings, trackings) { wrong.append("spacing") }
             if model.drawingStyle != s { wrong.append("style") }

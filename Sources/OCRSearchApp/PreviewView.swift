@@ -139,12 +139,14 @@ struct PreviewView: View {
                                                                boxSize: CGSize(width: target.width * preview.pixelSize.width,
                                                                                height: target.height * preview.pixelSize.height),
                                                                fontSize: imageFontSize(i),
-                                                               design: style.design, weight: style.weight,
+                                                               design: style.design,
+                                                               weight: preview.weights[safe: i]?.weight ?? style.weight,
                                                                boxColor: box,
                                                                textColor: (style.autoTextColor ? preview.ink[safe: i] ?? nil : nil)?.color ?? txt,
                                                                bgColor: (style.autoBg ? (preview.bgColors.indices.contains(i) ? preview.bgColors[i] : nil) : nil) ?? bg,
                                                                opacity: style.opacity, matchedFont: mf,
-                                                               fontIsManual: !style.manualFont.isEmpty)
+                                                               fontIsManual: !style.manualFont.isEmpty,
+                                                               weightValue: preview.weights[safe: i]?.axis)
                                                     .allowsHitTesting(false)   // never steals hover from the match it describes
                                                     .position(x: min(cardAnchor(i, in: geo.size).x + 110, geo.size.width - 100),
                                                               y: min(cardAnchor(i, in: geo.size).y + 70, geo.size.height - 60))
@@ -497,6 +499,8 @@ struct MatchInfoPopup: View {
     var matchedFont: String? = nil
     /// Whether `matchedFont` was picked by the user rather than matched from the image.
     var fontIsManual: Bool = false
+    /// The weight-axis value this match was measured at, when it has one; see matchedWeight.
+    var weightValue: CGFloat? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -507,6 +511,7 @@ struct MatchInfoPopup: View {
             if showText {
                 if let mf = matchedFont {
                     row("Font", "\(mf) \(fontIsManual ? "(picked)" : "(matched)"), \(Int(fontSize.rounded()))pt")
+                    if let weightValue { row("Weight", "\(Int(weightValue)), matched") }
                 } else {
                     row("Font", "\(design.label) \(weight.label), \(Int(fontSize.rounded()))pt")
                 }

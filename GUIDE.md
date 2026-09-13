@@ -188,6 +188,7 @@ From those:
 | what | how it is decided |
 |---|---|
 | **Font** | every candidate family is compared by letter shape against the whole page, not just the matched words: each line is drawn in the candidate over the glyphs measured off the image, and the closest wins. If nothing is close enough (a photo, a custom typeface) there is no match and the Font and Weight settings apply. If the winner is the system font (SF), Noto Sans is used instead; it ships with the app, and in that case only it is drawn 30% heavier (weight 400 → 520; bold 700 → 900, the font's maximum), since it reads lighter than SF. |
+| **Weight** | per match, matched to how much of its box the original's letters cover (a bold heading comes out bold, body text regular). A variable font is set to the exact measured weight; other fonts choose regular or bold. Noto Sans standing in for SF keeps its 30% boost and only chooses regular or bold. Turn off *Match weight from image*, or press **B**, to use one weight for every match. |
 | **Size** | scaled so the string's glyph outlines match the measured ink height. |
 | **Spacing** | letter spacing set so the redrawn word spans the measured ink width. This is what stops a substitute font drifting across a word — on Verdana it is the difference between +8.7% too wide and −0.4%. |
 | **Smoothness** | blurred to the softness measured on the original, and left alone when the original is already the crisper of the two, since sharpening is not possible. |
@@ -215,6 +216,8 @@ and the measured value returns:
   below each is only a fallback, used where sampling fails, and is labelled that way.
 - *Match font from image* — picking a font from the menu turns this off by itself, since choosing a
   font is the opposite of matching one. Choosing **Auto** turns it back on.
+- *Match weight from image* — pressing **B** turns this off, since choosing a weight by hand is the
+  opposite of matching one.
 - **Auto** beside Size, Spacing and Smoothness. Typing a value turns it off.
 
 **B** and **I** sit on the Size row; **Kerning** is below Smoothness.

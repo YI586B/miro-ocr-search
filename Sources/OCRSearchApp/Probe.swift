@@ -86,7 +86,8 @@ import CryptoKit
                 report += ink.map { " ink [\(px($0.rect))] edge \(String(format: "%.2f", $0.edgeRise))" } ?? " ink none"
                 report += " size \(String(format: "%.1f", (plan.fontSizes[safe: i] ?? 0) / plan.imageScale))pt"
                 report += " spacing \(String(format: "%.2f", (plan.trackings[safe: i] ?? 0) / plan.imageScale))pt"
-                report += " blur \(String(format: "%.2f", plan.smoothness[safe: i] ?? 0))\n"
+                report += " blur \(String(format: "%.2f", plan.smoothness[safe: i] ?? 0))"
+                report += " weight \(plan.weights[safe: i].map { w in w.axis.map { "\(Int($0))" } ?? w.weight.rawValue } ?? "-")\n"
                 if let side = sideBySide(path: path, rendered: png, around: ink?.rect ?? m.rect, pixelSize: plan.pixelSize) {
                     try? side.write(to: out.appendingPathComponent("\(name)-match\(i + 1).png"))
                 }

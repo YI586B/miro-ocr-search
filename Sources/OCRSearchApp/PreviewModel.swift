@@ -38,6 +38,8 @@ import OCRSearchCore
     /// hover, zoom or window resize.
     @Published private(set) var fontSizes: [CGFloat] = []
     @Published private(set) var trackings: [CGFloat] = []
+    /// The weight each match is drawn in; see PlanStage.fitWeights.
+    @Published private(set) var weights: [MatchWeight] = []
     @Published private(set) var smoothness: [CGFloat] = []
     /// The whole overlay, drawn by the same code that draws an export (overlayLayerImage) and
     /// laid over the photo, rather than assembled from a SwiftUI view per match. Two
@@ -63,7 +65,7 @@ import OCRSearchCore
     private var fitGeneration = 0
 
     private struct SizeInputs: Equatable {
-        var family: String?, weightBoost: CGFloat, design: TextDesign, weight: TextWeight
+        var family: String?, weightBoost: CGFloat, design: TextDesign, weight: TextWeight, autoWeight: Bool
     }
     private struct TrackingInputs: Equatable {
         var sizes: SizeInputs, manualSize: Double, kerning: Bool
@@ -82,7 +84,7 @@ import OCRSearchCore
         pixelSize = .zero; imageScale = 1
         matches = []; bgColors = []; ink = []
         detection = nil; detectedFont = nil; family = nil; weightBoost = 1; detected = false; page = nil
-        fontSizes = []; trackings = []; smoothness = []; sizesFor = nil; trackingsFor = nil
+        fontSizes = []; trackings = []; weights = []; smoothness = []; sizesFor = nil; trackingsFor = nil
         overlayLayer = nil
         guard image != nil else { return }
 
@@ -126,7 +128,7 @@ import OCRSearchCore
             guard q == query, m == searchMode else { continue }
             matches = found.matches; bgColors = found.bg; ink = found.ink
             smoothness = PlanStage.fitSmoothness(ink: ink, count: matches.count)
-            fontSizes = []; trackings = []; sizesFor = nil; trackingsFor = nil
+            fontSizes = []; trackings = []; weights = []; sizesFor = nil; trackingsFor = nil
             // With the latest style, which may have changed while this ran.
             await update(style)
             return
@@ -157,17 +159,23 @@ import OCRSearchCore
         let boost = PlanStage.weightBoost(for: current, detected: detection)
         family = fam
         weightBoost = boost
-        let sizeInputs = SizeInputs(family: fam, weightBoost: boost, design: current.design, weight: current.weight)
+        let sizeInputs = SizeInputs(family: fam, weightBoost: boost, design: current.design, weight: current.weight,
+                                    autoWeight: current.autoWeight)
         if sizeInputs != sizesFor {
             sizesFor = sizeInputs
             fitGeneration += 1
             let fit = fitGeneration
-            let (m, k, px) = (matches, ink, pixelSize)
-            let sizes = await Task.detached(priority: .userInitiated) {
-                PlanStage.fitSizes(matches: m, ink: k, family: fam, weightBoost: boost, style: current, pixelSize: px)
+            let (m, k, px, p) = (matches, ink, pixelSize, path)
+            // Weights first: the sizes are fitted in the weight each match is drawn in.
+            let fitted = await Task.detached(priority: .userInitiated) {
+                let weights = PlanStage.fitWeights(path: p, matches: m, ink: k, family: fam, weightBoost: boost, style: current)
+                let sizes = PlanStage.fitSizes(matches: m, ink: k, family: fam, weightBoost: boost, weights: weights,
+                                               style: current, pixelSize: px)
+                return (weights: weights, sizes: sizes)
             }.value
             guard gen == loadGeneration, fit == fitGeneration else { return }
-            fontSizes = sizes
+            weights = fitted.weights
+            fontSizes = fitted.sizes
             trackingsFor = nil
         }
         let latest = self.style
@@ -175,7 +183,7 @@ import OCRSearchCore
         if trackingInputs != trackingsFor {
             trackingsFor = trackingInputs
             trackings = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: fontSizes, family: fam,
-                                               weightBoost: boost, style: latest, pixelSize: pixelSize, imageScale: imageScale)
+                                               weightBoost: boost, weights: weights, style: latest, pixelSize: pixelSize, imageScale: imageScale)
         }
         rebuildOverlay()
     }
@@ -186,7 +194,8 @@ import OCRSearchCore
     var plan: RenderPlan {
         RenderPlan(pixelSize: pixelSize, imageScale: imageScale, matches: style.show ? matches : [],
                    bgColors: bgColors, ink: ink, matchedFonts: Array(repeating: family, count: matches.count),
-                   fontSizes: fontSizes, trackings: trackings, smoothness: smoothness, weightBoost: weightBoost)
+                   fontSizes: fontSizes, trackings: trackings, smoothness: smoothness, weightBoost: weightBoost,
+                   weights: weights)
     }
 
     /// The style the overlay is drawn with.

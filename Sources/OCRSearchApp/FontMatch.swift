@@ -69,19 +69,32 @@ let systemFontReplacementWeightBoost: CGFloat = 1.30
 /// fonts have that axis; anything else comes back unchanged. Keeps the rest of the font —
 /// style, italic, size — as it was.
 func heavier(_ font: NSFont, by factor: CGFloat) -> NSFont {
-    guard factor != 1 else { return font }
+    guard factor != 1, let axis = weightAxis(of: font) else { return font }
+    return withWeight(font, axis.current * factor)
+}
+
+private let wghtTag = 0x77676874   // 'wght'
+
+/// A variable font's weight axis: its range, and where `font` currently sits on it. nil for a font
+/// without one.
+func weightAxis(of font: NSFont) -> (lowest: CGFloat, highest: CGFloat, current: CGFloat)? {
     let ct = font as CTFont
-    let wght = 0x77676874   // 'wght'
     guard let axis = (CTFontCopyVariationAxes(ct) as? [[CFString: Any]])?
-              .first(where: { ($0[kCTFontVariationAxisIdentifierKey] as? NSNumber)?.intValue == wght }),
+              .first(where: { ($0[kCTFontVariationAxisIdentifierKey] as? NSNumber)?.intValue == wghtTag }),
           let fallback = (axis[kCTFontVariationAxisDefaultValueKey] as? NSNumber)?.doubleValue,
           let lowest = (axis[kCTFontVariationAxisMinimumValueKey] as? NSNumber)?.doubleValue,
-          let highest = (axis[kCTFontVariationAxisMaximumValueKey] as? NSNumber)?.doubleValue else { return font }
+          let highest = (axis[kCTFontVariationAxisMaximumValueKey] as? NSNumber)?.doubleValue else { return nil }
     // A font at its default instance (Noto Sans Regular) reports no variation at all.
-    let current = ((CTFontCopyVariation(ct) as? [NSNumber: Any])?[NSNumber(value: wght)] as? NSNumber)?.doubleValue ?? fallback
-    let target = min(max(current * Double(factor), lowest), highest)
-    let descriptor = CTFontDescriptorCreateCopyWithVariation(CTFontCopyFontDescriptor(ct),
-                                                             NSNumber(value: wght) as CFNumber, CGFloat(target))
+    let current = ((CTFontCopyVariation(ct) as? [NSNumber: Any])?[NSNumber(value: wghtTag)] as? NSNumber)?.doubleValue ?? fallback
+    return (CGFloat(lowest), CGFloat(highest), CGFloat(current))
+}
+
+/// `font` set to `value` on its weight axis, within the axis's range; unchanged without one.
+func withWeight(_ font: NSFont, _ value: CGFloat) -> NSFont {
+    guard let axis = weightAxis(of: font) else { return font }
+    let target = min(max(value, axis.lowest), axis.highest)
+    let descriptor = CTFontDescriptorCreateCopyWithVariation(CTFontCopyFontDescriptor(font as CTFont),
+                                                             NSNumber(value: wghtTag) as CFNumber, target)
     return CTFontCreateWithFontDescriptor(descriptor, font.pointSize, nil) as NSFont
 }
 
@@ -207,10 +220,88 @@ func rankFonts(forImage items: [(text: String, rect: CGRect)], path: String, pix
     return scored.sorted { $0.score > $1.score }
 }
 
+/// The weight a match is drawn in: the face (regular or bold) and, for a variable font, an exact
+/// value on its weight axis.
+struct MatchWeight: Sendable, Equatable {
+    var weight: TextWeight
+    var axis: CGFloat? = nil
+}
+
+/// The weight whose letters cover as much of their box as the original's do — see inkCoverage.
+///
+/// Weight is matched on ink coverage, not on shape: the shape comparison rankFonts uses to tell
+/// families apart favours light weights (a substitute's letters never line up exactly, and a thick
+/// stroke that misses costs more than a thin one) — a bold heading scored best at weight 300.
+/// Coverage rises steadily with weight and is unchanged by stretching the letters to fit the box,
+/// so it can be matched directly: to a value on the weight axis for a variable font, found by
+/// bisection, and otherwise to whichever of regular and bold is closer. `ink` is the letters' box,
+/// normalised with a bottom-left origin. nil when the original shows no measurable ink.
+///
+/// With a `weightBoost` — Noto Sans standing in for SF, drawn 30% heavier by decision (see
+/// systemFontReplacementWeightBoost) — the boost is kept: only regular or bold is chosen, both
+/// boosted, never a measured value in place of it.
+func matchedWeight(_ text: String, ink: CGRect, image: CGImage, family: String?,
+                   design: Font.Design, weightBoost: CGFloat = 1) -> MatchWeight? {
+    let crop = inkCrop(of: image, ink: ink, width: CGFloat(image.width), height: CGFloat(image.height))
+    let target = inkCoverage(crop)
+    guard target > 0 else { return nil }
+    if weightBoost == 1, let family, let base = nsFont(family: family, bold: false, size: 100),
+       let axis = weightAxis(of: base) {
+        var lo = axis.lowest, hi = axis.highest
+        for _ in 0..<10 {
+            let mid = (lo + hi) / 2
+            guard let c = drawnCoverage(text, font: withWeight(base, mid), in: crop) else { return nil }
+            if c < target { lo = mid } else { hi = mid }
+        }
+        return MatchWeight(weight: .regular, axis: ((lo + hi) / 2).rounded())
+    }
+    let scored = [TextWeight.regular, .bold].compactMap { w -> (TextWeight, Double)? in
+        let font = matchFont(size: 100, weight: w.font, design: design, matchedFamily: family, weightBoost: weightBoost)
+        return drawnCoverage(text, font: font, in: crop).map { (w, abs($0 - target)) }
+    }
+    return scored.min { $0.1 < $1.1 }.map { MatchWeight(weight: $0.0) }
+}
+
+/// How much of the glyph box the original's letters cover, 0 to 1: ink strength averaged over the
+/// box, relative to the strength of solid ink (the 95th percentile), so grey text on white counts
+/// as fully covered where its strokes are.
+func inkCoverage(_ crop: InkCrop) -> Double {
+    let box = crop.ink.integral
+    var values: [Double] = []
+    for y in max(0, Int(box.minY))..<min(crop.height, Int(box.maxY)) {
+        for x in max(0, Int(box.minX))..<min(crop.width, Int(box.maxX)) { values.append(crop.pixels[y * crop.width + x]) }
+    }
+    guard !values.isEmpty else { return 0 }
+    let solid = values.sorted()[Int(Double(values.count - 1) * 0.95)]
+    guard solid > 0.05 else { return 0 }
+    return values.reduce(0) { $0 + min($1 / solid, 1) } / Double(values.count)
+}
+
+/// The same for `text` drawn in `font` over the crop's glyph box, stretched to fill it.
+func drawnCoverage(_ text: String, font: NSFont, in crop: InkCrop) -> Double? {
+    let bounds = glyphBounds(of: text, font: font)
+    guard bounds.width > 1, bounds.height > 1 else { return nil }
+    let sx = crop.ink.width / bounds.width, sy = crop.ink.height / bounds.height
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: text,
+        attributes: [.font: font, .foregroundColor: NSColor.white, .ligature: 0]))
+    let drawn = grayPixels(width: crop.width, height: crop.height) { ctx in
+        ctx.translateBy(x: crop.ink.minX - bounds.minX * sx, y: crop.ink.minY - bounds.minY * sy)
+        ctx.scaleBy(x: sx, y: sy)
+        ctx.textPosition = .zero
+        CTLineDraw(line, ctx)
+    }
+    let box = crop.ink.integral
+    var total = 0.0, n = 0.0
+    for y in max(0, Int(box.minY))..<min(crop.height, Int(box.maxY)) {
+        for x in max(0, Int(box.minX))..<min(crop.width, Int(box.maxX)) { total += drawn[y * crop.width + x]; n += 1 }
+    }
+    return n > 0 ? total / n : nil
+}
+
 /// One line's glyphs cut out of the image as ink strength — each pixel's distance from the
 /// background level, taken as the median of the crop's border — at no more than
 /// comparisonHeight, with a small margin all round.
-private struct InkCrop {
+struct InkCrop {
     var pixels: [Double]
     var width: Int, height: Int
     /// The glyph box inside the crop, in crop pixels, bottom-left origin.
@@ -390,11 +481,13 @@ let trackingLimit: CGFloat = 0.12
 /// matching the image or from the user picking one is the caller's business; all that matters
 /// here is whether there is a family to use. A nil family *is* the instruction to fall back.
 /// `weightBoost` makes the matched family heavier (see systemFontReplacementWeightBoost).
+/// `weightAxis`, a value measured for this match (see matchedWeight), replaces both the face's own
+/// weight and the boost.
 func matchFont(size: CGFloat, weight: Font.Weight, design: Font.Design,
-               matchedFamily: String?, weightBoost: CGFloat = 1) -> NSFont {
+               matchedFamily: String?, weightBoost: CGFloat = 1, weightAxis axis: CGFloat? = nil) -> NSFont {
     if let family = matchedFamily,
        let f = NSFont(name: renderableFontName(family: family, bold: weight == .bold), size: size) {
-        return heavier(f, by: weightBoost)
+        return axis.map { withWeight(f, $0) } ?? heavier(f, by: weightBoost)
     }
     return nsFont(size: size, weight: weight, design: design)
 }
@@ -408,10 +501,11 @@ func matchFont(size: CGFloat, weight: Font.Weight, design: Font.Design,
 /// it, so solving a size from its height made every overlay that much too large — visibly so on
 /// short strings, which never trip the width limit that was accidentally correcting the long ones.
 func inkFittedFontSize(for text: String, weight: Font.Weight, design: Font.Design,
-                       matchedFamily: String?, weightBoost: CGFloat = 1, fitting ink: CGSize) -> CGFloat {
+                       matchedFamily: String?, weightBoost: CGFloat = 1, weightAxis: CGFloat? = nil,
+                       fitting ink: CGSize) -> CGFloat {
     guard !text.isEmpty, ink.width > 1, ink.height > 1 else { return 4 }
     let probe = matchFont(size: 100, weight: weight, design: design, matchedFamily: matchedFamily,
-                          weightBoost: weightBoost)
+                          weightBoost: weightBoost, weightAxis: weightAxis)
     let b = glyphBounds(of: text, font: probe)
     guard b.height > 1, b.width > 1 else { return 4 }
     var size = 100 * ink.height / b.height

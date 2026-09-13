@@ -56,6 +56,7 @@ struct SettingsView: View {
     @AppStorage(HL.design) private var design = OverlayStyle.defaults.design
     @AppStorage(HL.weight) private var weight = OverlayStyle.defaults.weight
     @AppStorage(HL.autoFont) private var autoFont = OverlayStyle.defaults.autoFont
+    @AppStorage(HL.autoWeight) private var autoWeight = OverlayStyle.defaults.autoWeight
     @AppStorage(HL.manualFont) private var manualFont = OverlayStyle.defaults.manualFont
     @AppStorage(HL.manualSize) private var manualSize = OverlayStyle.defaults.manualSize
     @AppStorage(HL.italic) private var italic = OverlayStyle.defaults.italic
@@ -89,9 +90,10 @@ struct SettingsView: View {
                 Picker("Font", selection: $design) {
                     ForEach(TextDesign.allCases, id: \.self) { Text($0.label).tag($0) }
                 }.disabled(autoFont)
+                Toggle("Match weight from image", isOn: $autoWeight)
                 Picker("Weight", selection: $weight) {
                     ForEach(TextWeight.allCases, id: \.self) { Text($0.label).tag($0) }
-                }
+                }.disabled(autoWeight)
                 Toggle("Italic", isOn: $italic)
                 Toggle("Auto-match an installed font", isOn: $autoFont)
                 Text(autoTextColor

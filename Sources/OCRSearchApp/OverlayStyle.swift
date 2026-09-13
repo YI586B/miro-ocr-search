@@ -16,6 +16,7 @@ enum HL {
     static let autoBg = "highlightAutoBg"        // sample the background from the image instead of using bgHex
     static let design = "highlightFontDesign"    // default | rounded | serif | monospaced
     static let weight = "highlightFontWeight"    // regular | medium | bold
+    static let autoWeight = "highlightAutoWeight"  // pick regular or bold per match from the image instead of using weight
     static let autoFont = "highlightAutoFont"    // auto-match an installed font instead of using design
     static let manualFont = "highlightManualFont"  // overrides the auto-detected family; "" = use it as detected
     static let manualSize = "highlightManualSize"  // fixed size for every match, in image pixels; 0 = auto-fit
@@ -79,6 +80,10 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     var autoBg = true
     var design: TextDesign = .system
     var weight: TextWeight = .regular
+    /// Pick regular or bold for each match by comparing both with the original's letters, rather
+    /// than drawing every match in `weight` — screenshots mix weights, and a bold heading redrawn
+    /// regular stands out. Only where the letters were isolated; elsewhere `weight` applies.
+    var autoWeight = true
     var autoFont = false
     var manualFont = ""
     /// Letter spacing, in points, applied on top of what the font does by itself. nil fits it to
@@ -98,7 +103,7 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     /// Boxes and text are app-wide (see forImage), so they are left out of what an image saves.
     private enum CodingKeys: String, CodingKey {
         case show, boxHex, opacity, outline, textHex, autoTextColor, bgHex, autoBg, design, weight
-        case autoFont, manualFont, manualTracking, kerning, manualSmoothness, manualSize, italic
+        case autoWeight, autoFont, manualFont, manualTracking, kerning, manualSmoothness, manualSize, italic
     }
 
     // MARK: per image
@@ -154,7 +159,8 @@ struct OverlayStyle: Sendable, Codable, Equatable {
         d.set(outline, forKey: HL.outline); d.set(textHex, forKey: HL.textHex)
         d.set(autoTextColor, forKey: HL.autoTextColor); d.set(bgHex, forKey: HL.bgHex)
         d.set(autoBg, forKey: HL.autoBg); d.set(design.rawValue, forKey: HL.design)
-        d.set(weight.rawValue, forKey: HL.weight); d.set(autoFont, forKey: HL.autoFont)
+        d.set(weight.rawValue, forKey: HL.weight); d.set(autoWeight, forKey: HL.autoWeight)
+        d.set(autoFont, forKey: HL.autoFont)
         d.set(manualFont, forKey: HL.manualFont); d.set(manualSize, forKey: HL.manualSize)
         d.set(italic, forKey: HL.italic)
     }
@@ -184,6 +190,7 @@ struct OverlayStyle: Sendable, Codable, Equatable {
             autoBg: bool(HL.autoBg, def.autoBg),
             design: d.string(forKey: HL.design).flatMap(TextDesign.init(rawValue:)) ?? def.design,
             weight: d.string(forKey: HL.weight).flatMap(TextWeight.init(rawValue:)) ?? def.weight,
+            autoWeight: bool(HL.autoWeight, def.autoWeight),
             autoFont: bool(HL.autoFont, def.autoFont),
             manualFont: d.string(forKey: HL.manualFont) ?? def.manualFont,
             manualSize: double(HL.manualSize, def.manualSize),
@@ -193,7 +200,7 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     /// Whether any font setting differs from automatic — what resetFontToAutomatic undoes.
     var fontIsOverridden: Bool {
         !manualFont.isEmpty || manualSize > 0 || manualTracking != nil
-            || manualSmoothness != nil || !kerning || weight == .bold || italic
+            || manualSmoothness != nil || !kerning || weight == .bold || !autoWeight || italic
     }
 
     /// Font, size, spacing and smoothness back to what is matched and fitted from the image,
@@ -202,6 +209,26 @@ struct OverlayStyle: Sendable, Codable, Equatable {
         manualFont = ""; autoFont = true
         manualSize = 0; manualTracking = nil; manualSmoothness = nil
         kerning = true
-        weight = .regular; italic = false
+        weight = .regular; autoWeight = true; italic = false
+    }
+}
+
+extension OverlayStyle {
+    /// Loads a saved look field by field, keeping the default for any field it does not have, so a
+    /// look saved before a setting existed still loads — with the new setting at its default —
+    /// instead of failing and dropping the image back to the Settings defaults altogether.
+    init(from decoder: Decoder) throws {
+        self.init()
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func load<T: Decodable>(_ key: CodingKeys, _ value: inout T) {
+            if let v = try? c.decodeIfPresent(T.self, forKey: key) { value = v }
+        }
+        load(.show, &show); load(.boxHex, &boxHex); load(.opacity, &opacity); load(.outline, &outline)
+        load(.textHex, &textHex); load(.autoTextColor, &autoTextColor); load(.bgHex, &bgHex)
+        load(.autoBg, &autoBg); load(.design, &design); load(.weight, &weight); load(.autoWeight, &autoWeight)
+        load(.autoFont, &autoFont); load(.manualFont, &manualFont); load(.kerning, &kerning)
+        load(.manualSize, &manualSize); load(.italic, &italic)
+        if let v = try? c.decodeIfPresent(Double.self, forKey: .manualTracking) { manualTracking = v }
+        if let v = try? c.decodeIfPresent(Double.self, forKey: .manualSmoothness) { manualSmoothness = v }
     }
 }

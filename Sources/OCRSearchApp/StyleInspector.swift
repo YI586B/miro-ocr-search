@@ -141,6 +141,8 @@ struct StyleInspector: View {
                         if on { style.manualFont = "" }
                     }))
                     .help("Redraw each match in whichever installed font has letter shapes closest to the text on the image (or \(systemFontReplacement) if that's the system font). Picking a font below turns this off.")
+                Toggle("Match weight from image", isOn: $style.autoWeight)
+                    .help("Draw each match regular or bold, whichever is closer to its letters on the image. Pressing B turns this off.")
                 Picker("", selection: Binding<String>(
                         get: { style.manualFont },
                         // Picking a specific font is the opposite of matching one
@@ -173,7 +175,9 @@ struct StyleInspector: View {
                         .toggleStyle(.button).controlSize(.small)
                         .help("Size each match to the glyphs measured on the image. Typing a size turns this off.")
                     Spacer()
-                    Toggle(isOn: Binding(get: { style.weight == .bold }, set: { style.weight = $0 ? .bold : .regular })) {
+                    // Choosing a weight by hand is the opposite of matching it, so B turns matching off.
+                    Toggle(isOn: Binding(get: { !style.autoWeight && style.weight == .bold },
+                                         set: { style.autoWeight = false; style.weight = $0 ? .bold : .regular })) {
                         Text("B").bold()
                     }.toggleStyle(.button).help("Bold").accessibilityLabel("Bold")
                     Toggle(isOn: $style.italic) {
