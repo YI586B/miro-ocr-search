@@ -77,19 +77,35 @@ public final class RecognizedPage: @unchecked Sendable {
     }
 }
 
-/// A word's box, when Vision gave it its whole line's.
+/// A match's box, when Vision gave it the box of something longer.
 ///
-/// Vision measures a range by the words its recogniser segmented, and a line with no breaks in it —
-/// a URL, a file path, an identifier — is one word to it, so asking for part of one returns the
-/// box of all of it. Drawn over, that wipes out the whole line and stretches the word across it.
-/// When a range well short of its line comes back that wide, its place is estimated instead from
-/// how much of the line's width the text before it and the text itself take, set in the system
-/// font: approximate, since the real font is not known yet, but in the right place.
+/// Vision measures a range by the words its recogniser segmented, so asking for part of one returns
+/// the box of all of it. A line with no breaks in it — a URL, a path, an identifier — is one word to
+/// it, and so is a word with punctuation attached ("Background:"). Drawn over, the first wipes out
+/// the whole line; the second pulls the colon into the word, and its letter spacing is stretched to
+/// cover it. When a range comes back as wide as the whitespace-free run of text around it — or
+/// failing that, as wide as its whole line — its place is estimated from how much of that run's
+/// width the text before it and the text itself take, set in the system font: approximate, since
+/// the real font is not known yet, but in the right place and the right width.
 private func narrowed(_ box: CGRect, range r: Range<String.Index>, of cand: VNRecognizedText) -> CGRect {
     let s = cand.string
-    guard r != s.startIndex..<s.endIndex, s[r].count * 10 < s.count * 6,
-          let full = try? cand.boundingBox(for: s.startIndex..<s.endIndex)?.boundingBox,
-          box.width >= full.width * 0.9 else { return box }
+    // The run of non-space text around the match.
+    var lo = r.lowerBound, hi = r.upperBound
+    while lo > s.startIndex, !s[s.index(before: lo)].isWhitespace { lo = s.index(before: lo) }
+    while hi < s.endIndex, !s[hi].isWhitespace { hi = s.index(after: hi) }
+    // Within a run, a box nearly its width is taken as the run's: even when Vision had the word
+    // right, the estimate lands within a percent or two of it. The whole line needs the box to be
+    // the line's, since a wrong estimate there would move the word a long way.
+    for (outer, share) in [(lo..<hi, 0.9), (s.startIndex..<s.endIndex, 0.99)] where outer != r {
+        guard let whole = try? cand.boundingBox(for: outer)?.boundingBox,
+              whole.width > 0, box.width >= whole.width * share else { continue }
+        return estimate(r, within: outer, of: s, box: whole, height: box)
+    }
+    return box
+}
+
+private func estimate(_ r: Range<String.Index>, within outer: Range<String.Index>, of s: String,
+                      box whole: CGRect, height box: CGRect) -> CGRect {
     let font = CTFontCreateUIFontForLanguage(.system, 12, nil)
     func width(_ t: Substring) -> CGFloat {
         let attrs = [NSAttributedString.Key(kCTFontAttributeName as String): font as Any]
@@ -97,11 +113,12 @@ private func narrowed(_ box: CGRect, range r: Range<String.Index>, of cand: VNRe
             CTLineCreateWithAttributedString(NSAttributedString(string: String(t), attributes: attrs) as CFAttributedString),
             nil, nil, nil))
     }
-    let total = width(s[...])
+    let total = width(s[outer])
     guard total > 0 else { return box }
-    let start = width(s[..<r.lowerBound]) / total, end = width(s[..<r.upperBound]) / total
-    return CGRect(x: full.minX + full.width * start, y: box.minY,
-                  width: full.width * (end - start), height: box.height)
+    let start = width(s[outer.lowerBound..<r.lowerBound]) / total
+    let end = width(s[outer.lowerBound..<r.upperBound]) / total
+    return CGRect(x: whole.minX + whole.width * start, y: box.minY,
+                  width: whole.width * (end - start), height: box.height)
 }
 
 /// Runs Apple's on-device Vision text recognition on one image file.
