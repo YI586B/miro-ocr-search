@@ -1,34 +1,26 @@
 # Miro-ocr-search — releases
 
-This branch holds built disk images only. The source is on
+This branch holds the latest built disk image only. The source is on
 [`main`](https://github.com/YI586B/miro-ocr-search/tree/main).
 
-## Miro-ocr-search-1.1.dmg (latest)
+## Miro-ocr-search-1.2.dmg
 
 | | |
 |---|---|
-| Version | 1.1 |
+| Version | 1.2 |
 | Requires | macOS 13 Ventura or later, Apple Silicon |
 | Size | 3.9M |
-| SHA-256 | `8bcaf8dba1f47124d3154b112202f5d8d16799626cfb4389134a84a525657424` |
+| SHA-256 | `3e01c6599af614de6fdd2741cf3674fe6ae149d10b80cb128f93273950964707` |
 
-What's new:
+What's new since 1.1:
 
-- Boxes and Text are two separate switches, both on by default, also in the View menu.
-- The preview window has its own search field, menu-bar commands, pinch zoom and a style panel
-  beside the image.
-- Font detection compares letter shapes and recognises SF text reliably; each image is read once.
-- The watermark scales with the image, 20px from the right and bottom.
-- The watermark artwork and the Noto Sans font now ship inside the app.
+- Boxes are an outline by default: the fill starts at 0%, and the style panel's Fill opacity
+  adds one.
+- Where the app stands in Noto Sans for Apple's system font, the redrawn text is drawn heavier, so
+  it matches the weight of the original more closely.
 
-## Miro-ocr-search-1.0.dmg
-
-| | |
-|---|---|
-| Version | 1.0 |
-| Requires | macOS 13 Ventura or later, Apple Silicon |
-| Size | 1.1M |
-| SHA-256 | `805ea957807c5ce9275ec47519aec461fbf26a68c0fd557f86e536550bf82d58` |
+It is a search tool, not an image editor: it finds text in your images and shows where it is.
+Images it outputs carry a Miro watermark, because the app uses Miro's libraries.
 
 ### Installing
 
@@ -44,7 +36,7 @@ developer cannot be verified or that the app is damaged. Neither means the downl
 
 Verify what you downloaded:
 
-    shasum -a 256 ~/Downloads/Miro-ocr-search-1.1.dmg
+    shasum -a 256 ~/Downloads/Miro-ocr-search-1.2.dmg
 
 Building from source avoids the quarantine entirely; see the
 [guide](https://github.com/YI586B/miro-ocr-search/blob/main/GUIDE.md).
