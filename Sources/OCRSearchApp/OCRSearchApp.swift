@@ -18,6 +18,7 @@ struct OCRSearchApp: App {
         // systemFontReplacement) and has to exist on Macs that never installed it.
         registerBundledFonts()
         SelfTest.runIfRequested()
+        Probe.runIfRequested()
     }
     var body: some Scene {
         WindowGroup("Miro-ocr-search") { ContentView().frame(minWidth: 760, minHeight: 520) }
