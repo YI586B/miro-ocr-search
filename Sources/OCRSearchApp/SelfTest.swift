@@ -22,6 +22,7 @@ import OCRSearchCore
         guard legacyStyleDecodes() else { print("FAILED: a saved style from an earlier version no longer loads"); exit(1) }
         guard fontDetectionHolds(images: URL(fileURLWithPath: a[i + 1])) else { exit(1) }
         guard weightBoostRuleHolds() else { exit(1) }
+        guard ownLookRulesHold() else { exit(1) }
         run(images: URL(fileURLWithPath: a[i + 1]), out: URL(fileURLWithPath: a[i + 2]))
         exit(0)
     }
@@ -94,6 +95,33 @@ import OCRSearchCore
             print("weight boost: only for the SF stand-in, \(systemFontReplacement) 400->\(Int(r)) and 700->\(Int(b))")
         }
         return ok
+    }
+
+    /// An image keeps a look of its own only while it differs from the defaults: opening one, or
+    /// switching the app-wide overlay, Boxes or Text, must not freeze a copy of the defaults onto
+    /// it. Checked against a throwaway preferences store, not the app's own.
+    static func ownLookRulesHold() -> Bool {
+        let suite = "ocrsearch-selftest-\(UUID().uuidString)"
+        guard let d = UserDefaults(suiteName: suite) else { return false }
+        defer { d.removePersistentDomain(forName: suite) }
+        let path = "/tmp/example.png"
+        var problems: [String] = []
+        let defaults = OverlayStyle.current(d)
+        defaults.keep(for: path, d)
+        if OverlayStyle.savedCount(d) != 0 { problems.append("a look equal to the defaults was saved") }
+        var switched = defaults; switched.showBoxes.toggle(); switched.show.toggle()
+        switched.keep(for: path, d)
+        if OverlayStyle.savedCount(d) != 0 { problems.append("switching Boxes or the overlay made the look the image's own") }
+        var changed = defaults; changed.opacity = 0.5
+        changed.keep(for: path, d)
+        if OverlayStyle.savedCount(d) != 1 || OverlayStyle.forImage(path, d).opacity != 0.5 { problems.append("a changed look was not kept") }
+        defaults.keep(for: path, d)
+        if OverlayStyle.savedCount(d) != 0 { problems.append("changing back did not forget the image's look") }
+        changed.keep(for: path, d); OverlayStyle.clearAll(d)
+        if OverlayStyle.savedCount(d) != 0 { problems.append("forgetting all left some") }
+        for p in problems { print("FAILED own look: \(p)") }
+        if problems.isEmpty { print("own look: kept only while it differs from the defaults") }
+        return problems.isEmpty
     }
 
     /// A per-image style as saved by earlier versions — with the old Boxes-or-Text `mode` and

@@ -57,6 +57,8 @@ struct SettingsView: View {
     @AppStorage(HL.weight) private var weight = OverlayStyle.defaults.weight
     @AppStorage(HL.autoFont) private var autoFont = OverlayStyle.defaults.autoFont
     @AppStorage(HL.autoWeight) private var autoWeight = OverlayStyle.defaults.autoWeight
+    @State private var savedLooks = 0
+    @State private var confirmForget = false
     @AppStorage(HL.manualFont) private var manualFont = OverlayStyle.defaults.manualFont
     @AppStorage(HL.manualSize) private var manualSize = OverlayStyle.defaults.manualSize
     @AppStorage(HL.italic) private var italic = OverlayStyle.defaults.italic
@@ -132,6 +134,26 @@ struct SettingsView: View {
             }
 
             Button("Reset") { OverlayStyle.defaults.saveAsDefaults() }
+
+            // Images keep a look of their own only once it differs from these defaults; this
+            // clears the ones kept so far, including copies older versions saved on merely
+            // opening an image, which then stopped following the defaults.
+            Section("Images with their own look") {
+                HStack {
+                    Text(savedLooks == 1 ? "1 image has its own look." : "\(savedLooks) images have their own look.")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Forget Every Image's Own Look…") { confirmForget = true }
+                        .disabled(savedLooks == 0)
+                }
+            }
+            .onAppear { savedLooks = OverlayStyle.savedCount() }
+            .confirmationDialog("Forget the look of \(savedLooks) image\(savedLooks == 1 ? "" : "s")?",
+                                isPresented: $confirmForget) {
+                Button("Forget", role: .destructive) { OverlayStyle.clearAll(); savedLooks = 0 }
+            } message: {
+                Text("They go back to following the defaults above. Picked fonts, sizes and colours on those images are lost.")
+            }
         }
         .padding(20).frame(width: 460)
     }

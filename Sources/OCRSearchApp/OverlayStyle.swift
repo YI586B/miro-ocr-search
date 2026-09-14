@@ -151,6 +151,31 @@ struct OverlayStyle: Sendable, Codable, Equatable {
         d.set(all, forKey: store)
     }
 
+    /// Forgets every image's own look, so all of them follow the defaults again.
+    static func clearAll(_ d: UserDefaults = .standard) { d.removeObject(forKey: store) }
+
+    /// How many images have a look of their own.
+    static func savedCount(_ d: UserDefaults = .standard) -> Int { d.dictionary(forKey: store)?.count ?? 0 }
+
+    /// Whether this look differs from `other` in anything an image keeps for itself — that is,
+    /// leaving out the app-wide overlay, Boxes and Text switches.
+    func differs(from other: OverlayStyle) -> Bool {
+        func own(_ s: OverlayStyle) -> OverlayStyle {
+            var s = s; s.show = true; s.showBoxes = true; s.showText = true; return s
+        }
+        return own(self) != own(other)
+    }
+
+    /// Keeps this as `path`'s own look only if it differs from the defaults; otherwise forgets any
+    /// saved one, so the image goes on following the defaults as they change.
+    ///
+    /// Saving on every change used to store a copy of the defaults for every image merely opened.
+    /// Those copies then outlived the defaults they were taken from: after the box fill default
+    /// went to 0%, images viewed before still drew it at 35%.
+    func keep(for path: String, _ d: UserDefaults = .standard) {
+        if differs(from: Self.current(d)) { save(for: path, d) } else { Self.clear(path, d) }
+    }
+
     /// Writes this look back as the defaults every image starts from.
     func saveAsDefaults(_ d: UserDefaults = .standard) {
         d.set(show, forKey: HL.show)

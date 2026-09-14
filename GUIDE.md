@@ -238,6 +238,16 @@ Style is per image because each image has its own type sizes and colours, so tun
 not restyle the rest. The three app-wide ones describe how you are looking at whatever is open, and
 following each image would mean paging through results kept changing the view under you.
 
+An image has a look of its own only once you change something on it; until then it follows the
+defaults in Settings, and changing those reaches it. The panel's last line says which: "follows the
+defaults" or "has its own look". Changing a setting back to the default hands the image back to the
+defaults. **Settings ▸ Forget Every Image's Own Look** clears them all, including copies earlier
+versions saved just by opening an image, which then stopped following the defaults.
+
+When a font was picked by hand for an image, the Font section says so and names what detection
+found, with **Use detected font** to switch back; when font matching is off, it says that, with
+**Match font from image**. The hover card shows a picked font's detected alternative too.
+
 The panel ends with a **Reset** menu and **Save as Default** (make this look the starting point for
 images that have none). Reset offers **Font to Automatic** (font, size, spacing, smoothness, bold,
 italic and kerning back to automatic), **This Image to Defaults** (forget this image's settings)

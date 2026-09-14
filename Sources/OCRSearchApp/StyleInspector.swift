@@ -64,10 +64,37 @@ struct StyleInspector: View {
 
     /// Says that these controls affect this image only, and holds the ways out of that: the one
     /// Reset menu (font only, this image, or a full recalculation) and making this look the default.
+    /// Where the font being drawn comes from, when it is not detection: a font picked by hand for
+    /// this image, or matching switched off. Said outright, with the way back, because otherwise a
+    /// picked font looks exactly like a detected one — a font chosen weeks ago on one image kept
+    /// being mistaken for what detection found.
+    @ViewBuilder private var fontSourceNote: some View {
+        let detected = preview.detection.map { "\($0.family)\($0.standsInForSystemFont ? " (for SF)" : "")" }
+        if !style.manualFont.isEmpty {
+            note("\(style.manualFont) is picked by hand for this image. "
+                 + (detected.map { "Detection found \($0)." } ?? "Detection found no close match."),
+                 action: "Use detected font") { style.manualFont = ""; style.autoFont = true }
+        } else if !style.autoFont {
+            note("Font matching is off: matches are drawn in \(style.design.label).",
+                 action: "Match font from image") { style.autoFont = true }
+        }
+    }
+
+    private func note(_ text: String, action: String, _ perform: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Button(action, action: perform).font(.caption).buttonStyle(.link)
+        }
+    }
+
     private var imageScopeFooter: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("These settings apply to \((path as NSString).lastPathComponent) only.")
-                .font(.caption).foregroundStyle(.secondary)
+            // Whether this image has a look of its own or follows the defaults — which decides
+            // whether changing the defaults in Settings reaches it.
+            Text(style.differs(from: OverlayStyle.current())
+                 ? "\((path as NSString).lastPathComponent) has its own look, so changes to the defaults in Settings don't reach it. Changes here apply to this image only."
+                 : "\((path as NSString).lastPathComponent) follows the defaults in Settings. Changes here apply to this image only.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Menu("Reset") {
                     Button("Font to Automatic") { style.resetFontToAutomatic() }
@@ -158,6 +185,7 @@ struct StyleInspector: View {
                         ForEach(candidateFontFamilies(), id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden().frame(maxWidth: .infinity)
+                fontSourceNote
                 // Size, then Bold and Italic, on one row as in a text-editing toolbar.
                 HStack(spacing: 6) {
                     Text("Size").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)

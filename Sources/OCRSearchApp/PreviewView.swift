@@ -146,7 +146,8 @@ struct PreviewView: View {
                                                                bgColor: (style.autoBg ? (preview.bgColors.indices.contains(i) ? preview.bgColors[i] : nil) : nil) ?? bg,
                                                                opacity: style.opacity, matchedFont: mf,
                                                                fontIsManual: !style.manualFont.isEmpty,
-                                                               weightValue: preview.weights[safe: i]?.axis)
+                                                               weightValue: preview.weights[safe: i]?.axis,
+                                                               detectedFont: preview.detectedFont)
                                                     .allowsHitTesting(false)   // never steals hover from the match it describes
                                                     .position(x: min(cardAnchor(i, in: geo.size).x + 110, geo.size.width - 100),
                                                               y: min(cardAnchor(i, in: geo.size).y + 70, geo.size.height - 60))
@@ -302,7 +303,7 @@ struct PreviewView: View {
             await preview.load(path: path, query: query, searchMode: searchMode, style: drawing(saved))
         }
         .onChange(of: style) { updated in
-            updated.save(for: path)
+            updated.keep(for: path)
             restyle()
         }
         .onChange(of: overlayOn) { _ in restyle() }
@@ -501,6 +502,8 @@ struct MatchInfoPopup: View {
     var fontIsManual: Bool = false
     /// The weight-axis value this match was measured at, when it has one; see matchedWeight.
     var weightValue: CGFloat? = nil
+    /// What detection found, shown beside a font picked by hand so the two are not confused.
+    var detectedFont: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -511,6 +514,7 @@ struct MatchInfoPopup: View {
             if showText {
                 if let mf = matchedFont {
                     row("Font", "\(mf) \(fontIsManual ? "(picked)" : "(matched)"), \(Int(fontSize.rounded()))pt")
+                    if fontIsManual { row("Detected", detectedFont ?? "no close match") }
                     if let weightValue { row("Weight", "\(Int(weightValue)), matched") }
                 } else {
                     row("Font", "\(design.label) \(weight.label), \(Int(fontSize.rounded()))pt")
