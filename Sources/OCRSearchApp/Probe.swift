@@ -68,8 +68,12 @@ import CryptoKit
                 + "manualFont \"\(drawn.manualFont)\", design \(drawn.design.rawValue), weight \(drawn.weight.rawValue), "
                 + "italic \(drawn.italic), manualSize \(drawn.manualSize), autoTextColor \(drawn.autoTextColor), "
                 + "autoBg \(drawn.autoBg), box \(drawn.boxHex) fill \(drawn.opacity) outline \(drawn.outline)\n"
-            report += "detected: \(model.detection.map { "\($0.family)\($0.standsInForSystemFont ? " (for SF)" : "")" } ?? "no match"), "
-                + "drawn in \(model.family ?? "system font (\(drawn.design.rawValue))"), weight x\(model.weightBoost)\n"
+            let perMatch = model.matches.indices.map { i -> String in
+                let d = model.detections[safe: i] ?? nil
+                return (d.map { "\($0.family)\($0.standsInForSystemFont ? " (for SF)" : "")" } ?? "no match")
+                    + " -> \((model.families[safe: i] ?? nil) ?? "system font") x\(model.weightBoosts[safe: i] ?? 1)"
+            }
+            report += "detected per match: " + (perMatch.isEmpty ? "-" : perMatch.joined(separator: "; ")) + "\n"
             if let page = try? RecognizedPage(at: url) {
                 let items = page.allTextBoxes.map { (text: $0.text, rect: $0.rect) }
                 let ranking = rankFonts(forImage: items, path: path, pixelSize: plan.pixelSize).prefix(6)
@@ -185,7 +189,8 @@ import CryptoKit
                             String(format: "%.2f", ink?.edgeRise ?? 0), String(format: "%.2f", plan.smoothness[safe: i] ?? 0),
                             String(format: "%.1f", (plan.fontSizes[safe: i] ?? 0) / plan.imageScale),
                             String(format: "%.2f", (plan.trackings[safe: i] ?? 0) / plan.imageScale),
-                            model.detection?.family ?? "-", model.detection?.standsInForSystemFont == true ? "yes" : "no",
+                            (model.detections[safe: i] ?? nil)?.family ?? "-",
+                            (model.detections[safe: i] ?? nil)?.standsInForSystemFont == true ? "yes" : "no",
                             top3, String(format: "%.3f", sim), inverted ? "yes" : "no", wholeLine ? "yes" : "no"]
                         .joined(separator: "\t") + "\n"
                     if let side = sideBySide(path: path, rendered: png, around: ink?.rect ?? m.rect, pixelSize: px) {

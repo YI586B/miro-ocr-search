@@ -25,15 +25,17 @@ import OCRSearchCore
     @Published private(set) var bgColors: [Color?] = []
     /// The original glyphs measured off the image, per match — colour and extent. See sampledInk.
     @Published private(set) var ink: [InkSample?] = []
-    /// What font detection found, kept apart from `family` so the font menu can show it as
-    /// "Auto (X)" even while a font is picked by hand.
-    @Published private(set) var detectedFont: String?
-    /// Detection's full answer, including whether the family is Noto Sans standing in for SF.
-    private(set) var detection: DetectedFont?
-    /// The family drawn; see PlanStage.family.
-    @Published private(set) var family: String?
-    /// How much heavier the family is drawn; see PlanStage.weightBoost.
-    @Published private(set) var weightBoost: CGFloat = 1
+    /// What font detection found for each match, from the block of text around it (see
+    /// BlockFontDetector) — including whether a family is Noto Sans standing in for SF.
+    @Published private(set) var detections: [DetectedFont?] = []
+    /// Detection's answer for the first match: what the font menu offers as "Auto (X)" and the
+    /// style panel names beside a picked font.
+    var detection: DetectedFont? { detections.first ?? nil }
+    var detectedFont: String? { detection?.family }
+    /// The family each match is drawn in; see PlanStage.family.
+    @Published private(set) var families: [String?] = []
+    /// How much heavier each match's family is drawn; see PlanStage.weightBoost.
+    @Published private(set) var weightBoosts: [CGFloat] = []
     /// Fitted per match, in image pixels, once per change of font, design or weight — never on
     /// hover, zoom or window resize.
     @Published private(set) var fontSizes: [CGFloat] = []
@@ -52,11 +54,13 @@ import OCRSearchCore
     private var path = ""
     /// The recognised page, kept so a new search and font detection need no second OCR pass.
     private var page: RecognizedPage?
+    /// Detects per block and remembers each block's answer for this image, across searches.
+    private var detector: BlockFontDetector?
     /// The latest drawing style: the image's own, with the app-wide overlay, Boxes and Text
     /// switches applied.
     private var style = OverlayStyle()
-    /// Whether detection has run for this image. Separate from detectedFont, which is also nil
-    /// when detection ran and found nothing.
+    /// Whether detection has run for the current matches. Separate from `detections`, which hold
+    /// nil where detection ran and found nothing.
     private var detected = false
     /// What the current sizes and spacing were fitted for, so a change that does not affect them
     /// (a colour, the fill) only redraws.
@@ -67,7 +71,7 @@ import OCRSearchCore
     private var fitGeneration = 0
 
     private struct SizeInputs: Equatable {
-        var family: String?, weightBoost: CGFloat, design: TextDesign, weight: TextWeight, autoWeight: Bool
+        var families: [String?], weightBoosts: [CGFloat], design: TextDesign, weight: TextWeight, autoWeight: Bool
     }
     private struct TrackingInputs: Equatable {
         var sizes: SizeInputs, manualSize: Double, kerning: Bool
@@ -85,7 +89,7 @@ import OCRSearchCore
         failed = image == nil
         pixelSize = .zero; imageScale = 1
         matches = []; bgColors = []; ink = []; patches = []
-        detection = nil; detectedFont = nil; family = nil; weightBoost = 1; detected = false; page = nil
+        detections = []; families = []; weightBoosts = []; detected = false; page = nil; detector = nil
         fontSizes = []; trackings = []; weights = []; smoothness = []; sizesFor = nil; trackingsFor = nil
         overlayLayer = nil
         guard image != nil else { return }
@@ -98,6 +102,7 @@ import OCRSearchCore
         }.value
         guard gen == loadGeneration else { return }
         pixelSize = scan.px; imageScale = scan.scale; page = scan.page
+        detector = scan.page.map { BlockFontDetector(page: $0, path: path, pixelSize: scan.px) }
         await rematch(gen)
         if gen == loadGeneration { scanning = false }
     }
@@ -131,6 +136,8 @@ import OCRSearchCore
             matches = found.matches; bgColors = found.bg; ink = found.ink; patches = found.patches
             smoothness = PlanStage.fitSmoothness(ink: ink, count: matches.count)
             fontSizes = []; trackings = []; weights = []; sizesFor = nil; trackingsFor = nil
+            // Detection is per match now, so new matches need their blocks looked up.
+            detections = []; detected = false
             // With the latest style, which may have changed while this ran.
             await update(style)
             return
@@ -145,23 +152,21 @@ import OCRSearchCore
         guard pixelSize.width > 0, pixelSize.height > 0 else { return }
         let gen = loadGeneration
 
-        if (style.showText || style.autoFont), !detected, !matches.isEmpty, let page {
+        if (style.showText || style.autoFont), !detected, !matches.isEmpty, let detector {
             detected = true
-            let (p, px) = (path, pixelSize)
-            let found = await Task.detached(priority: .userInitiated) {
-                PlanStage.detectFont(page: page, path: p, pixelSize: px)
-            }.value
-            guard gen == loadGeneration else { return }
-            detection = found
-            detectedFont = found?.family
+            let m = matches
+            let found = await Task.detached(priority: .userInitiated) { detector.detect(m) }.value
+            guard gen == loadGeneration, found.count == matches.count else { return }
+            detections = found
         }
 
         let current = self.style
-        let fam = PlanStage.family(for: current) { detection?.family }
-        let boost = PlanStage.weightBoost(for: current, detected: detection)
-        family = fam
-        weightBoost = boost
-        let sizeInputs = SizeInputs(family: fam, weightBoost: boost, design: current.design, weight: current.weight,
+        let found = matches.indices.map { detections[safe: $0] ?? nil }
+        let fam = found.map { d in PlanStage.family(for: current) { d?.family } }
+        let boost = found.map { PlanStage.weightBoost(for: current, detected: $0) }
+        families = fam
+        weightBoosts = boost
+        let sizeInputs = SizeInputs(families: fam, weightBoosts: boost, design: current.design, weight: current.weight,
                                     autoWeight: current.autoWeight)
         if sizeInputs != sizesFor {
             sizesFor = sizeInputs
@@ -170,8 +175,8 @@ import OCRSearchCore
             let (m, k, px, p) = (matches, ink, pixelSize, path)
             // Weights first: the sizes are fitted in the weight each match is drawn in.
             let fitted = await Task.detached(priority: .userInitiated) {
-                let weights = PlanStage.fitWeights(path: p, matches: m, ink: k, family: fam, weightBoost: boost, style: current)
-                let sizes = PlanStage.fitSizes(matches: m, ink: k, family: fam, weightBoost: boost, weights: weights,
+                let weights = PlanStage.fitWeights(path: p, matches: m, ink: k, families: fam, weightBoosts: boost, style: current)
+                let sizes = PlanStage.fitSizes(matches: m, ink: k, families: fam, weightBoosts: boost, weights: weights,
                                                style: current, pixelSize: px)
                 return (weights: weights, sizes: sizes)
             }.value
@@ -184,8 +189,8 @@ import OCRSearchCore
         let trackingInputs = TrackingInputs(sizes: sizeInputs, manualSize: latest.manualSize, kerning: latest.kerning)
         if trackingInputs != trackingsFor {
             trackingsFor = trackingInputs
-            trackings = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: fontSizes, family: fam,
-                                               weightBoost: boost, weights: weights, style: latest, pixelSize: pixelSize, imageScale: imageScale)
+            trackings = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: fontSizes, families: fam,
+                                               weightBoosts: boost, weights: weights, style: latest, pixelSize: pixelSize, imageScale: imageScale)
         }
         rebuildOverlay()
     }
@@ -195,8 +200,8 @@ import OCRSearchCore
     /// window writes exactly what is being looked at.
     var plan: RenderPlan {
         RenderPlan(pixelSize: pixelSize, imageScale: imageScale, matches: style.show ? matches : [],
-                   bgColors: bgColors, ink: ink, matchedFonts: Array(repeating: family, count: matches.count),
-                   fontSizes: fontSizes, trackings: trackings, smoothness: smoothness, weightBoost: weightBoost,
+                   bgColors: bgColors, ink: ink, matchedFonts: matches.indices.map { families[safe: $0] ?? nil },
+                   fontSizes: fontSizes, trackings: trackings, smoothness: smoothness, weightBoosts: weightBoosts,
                    weights: weights, patches: patches)
     }
 

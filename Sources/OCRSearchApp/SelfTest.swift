@@ -253,14 +253,15 @@ import OCRSearchCore
             ("switches", { $0.showBoxes.toggle(); $0.showText.toggle() }, { $0.showBoxes = target.showBoxes; $0.showText = target.showText }),
         ]
         func check(_ s: OverlayStyle, _ step: String) {
-            let family = PlanStage.family(for: s) { model.detection?.family }
-            let boost = PlanStage.weightBoost(for: s, detected: model.detection)
-            let weights = PlanStage.fitWeights(path: path, matches: model.matches, ink: model.ink, family: family,
-                                               weightBoost: boost, style: s)
-            let sizes = PlanStage.fitSizes(matches: model.matches, ink: model.ink, family: family,
-                                           weightBoost: boost, weights: weights, style: s, pixelSize: model.pixelSize)
+            let found = model.matches.indices.map { model.detections[safe: $0] ?? nil }
+            let family = found.map { d in PlanStage.family(for: s) { d?.family } }
+            let boost = found.map { PlanStage.weightBoost(for: s, detected: $0) }
+            let weights = PlanStage.fitWeights(path: path, matches: model.matches, ink: model.ink, families: family,
+                                               weightBoosts: boost, style: s)
+            let sizes = PlanStage.fitSizes(matches: model.matches, ink: model.ink, families: family,
+                                           weightBoosts: boost, weights: weights, style: s, pixelSize: model.pixelSize)
             let trackings = PlanStage.fitTrackings(matches: model.matches, ink: model.ink, sizes: sizes,
-                                                   family: family, weightBoost: boost, weights: weights, style: s,
+                                                   families: family, weightBoosts: boost, weights: weights, style: s,
                                                    pixelSize: model.pixelSize, imageScale: model.imageScale)
             // Within a millionth of a point: CoreText's measurements wobble in the ninth digit from
             // one call to the next for the same font and text. A stale value is off by far more.
@@ -268,8 +269,8 @@ import OCRSearchCore
                 a.count == b.count && zip(a, b).allSatisfy { abs($0 - $1) < 1e-6 }
             }
             var wrong: [String] = []
-            if model.family != family { wrong.append("family") }
-            if model.weightBoost != boost { wrong.append("weight boost") }
+            if model.families != family { wrong.append("family") }
+            if model.weightBoosts != boost { wrong.append("weight boost") }
             if model.weights != weights { wrong.append("weights") }
             if !same(model.fontSizes, sizes) { wrong.append("sizes") }
             if !same(model.trackings, trackings) { wrong.append("spacing") }
@@ -282,6 +283,11 @@ import OCRSearchCore
             await model.load(path: path, query: restyled ? "Settings" : c.query,
                              searchMode: restyled ? .words : c.mode, style: first)
             check(first, "load")
+            // Per-block detection, straight after loading: the same answers a fresh detector gives.
+            if !restyled, !model.detections.isEmpty, let page = try? RecognizedPage(at: URL(fileURLWithPath: path)) {
+                let fresh = BlockFontDetector(page: page, path: path, pixelSize: model.pixelSize).detect(model.matches)
+                if fresh != model.detections { state.problems.append("after load: per-block detection differs from a fresh detector") }
+            }
             if restyled {
                 await model.search(query: c.query, searchMode: c.mode)
                 check(first, "searching again")

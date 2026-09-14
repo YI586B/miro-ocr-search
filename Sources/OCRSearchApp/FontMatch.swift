@@ -153,6 +153,18 @@ struct DetectedFont: Sendable, Equatable {
     /// Whether `family` is systemFontReplacement standing in for an SF family that won — the one
     /// case drawn systemFontReplacementWeightBoost heavier.
     var standsInForSystemFont: Bool
+    /// The family that actually ranked first — the SF family itself when Noto Sans stands in.
+    var winner: String = ""
+}
+
+/// The detection a ranking amounts to: its winner, if it is close enough to count, with Noto Sans
+/// standing in for an SF winner.
+func detection(from ranking: [(family: String, score: Double)]) -> DetectedFont? {
+    guard let top = ranking.first, top.score >= minimumShapeScore else { return nil }
+    if isSystemFont(top.family), NSFontManager.shared.availableFontFamilies.contains(systemFontReplacement) {
+        return DetectedFont(family: systemFontReplacement, standsInForSystemFont: true, winner: top.family)
+    }
+    return DetectedFont(family: top.family, standsInForSystemFont: false, winner: top.family)
 }
 
 /// Best-guess installed font family for a whole image, or nil if nothing matches well enough.
@@ -161,12 +173,7 @@ struct DetectedFont: Sendable, Equatable {
 /// that is a deliberate choice, not a detection result, so rankFonts still reports the SF family.
 func detectedFont(forImage items: [(text: String, rect: CGRect)], path: String, pixelSize: CGSize,
                 from families: [String] = candidateFontFamilies()) -> DetectedFont? {
-    guard let winner = rankFonts(forImage: items, path: path, pixelSize: pixelSize, from: families).first,
-          winner.score >= minimumShapeScore else { return nil }
-    if isSystemFont(winner.family), NSFontManager.shared.availableFontFamilies.contains(systemFontReplacement) {
-        return DetectedFont(family: systemFontReplacement, standsInForSystemFont: true)
-    }
-    return DetectedFont(family: winner.family, standsInForSystemFont: false)
+    detection(from: rankFonts(forImage: items, path: path, pixelSize: pixelSize, from: families))
 }
 
 /// The family detectedFont settles on, without saying whether it is a stand-in.

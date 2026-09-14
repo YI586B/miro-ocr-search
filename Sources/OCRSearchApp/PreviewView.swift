@@ -133,7 +133,7 @@ struct PreviewView: View {
                                             if let i = hoverIndex, preview.matches.indices.contains(i) {
                                                 let m = preview.matches[i]
                                                 let target = hoverTarget(i)
-                                                let mf = preview.family
+                                                let mf = preview.families[safe: i] ?? nil
                                                 MatchInfoPopup(text: m.text, showBoxes: showBoxes, showText: showText,
                                                                index: i + 1, total: preview.matches.count,
                                                                boxSize: CGSize(width: target.width * preview.pixelSize.width,
@@ -147,7 +147,7 @@ struct PreviewView: View {
                                                                opacity: style.opacity, matchedFont: mf,
                                                                fontIsManual: !style.manualFont.isEmpty,
                                                                weightValue: preview.weights[safe: i]?.axis,
-                                                               detectedFont: preview.detectedFont)
+                                                               detectedFont: (preview.detections[safe: i] ?? nil)?.family)
                                                     .allowsHitTesting(false)   // never steals hover from the match it describes
                                                     .position(x: min(cardAnchor(i, in: geo.size).x + 110, geo.size.width - 100),
                                                               y: min(cardAnchor(i, in: geo.size).y + 70, geo.size.height - 60))

@@ -53,7 +53,7 @@ struct RenderPlan: Sendable {
     var smoothness: [CGFloat] = []
     /// How much heavier the matched family is drawn; 1 except where Noto Sans stands in for SF.
     /// See PlanStage.weightBoost.
-    var weightBoost: CGFloat = 1
+    var weightBoosts: [CGFloat] = []
     /// The weight each match is drawn in; see PlanStage.fitWeights. Empty means the style's weight.
     var weights: [MatchWeight] = []
     /// Each match's original letters painted out, where they were isolated; see cleanedPatches.
@@ -74,21 +74,125 @@ struct RenderPlan: Sendable {
         let (bg, ink, patches) = style.showText ? PlanStage.sample(path: path, matches: matches) : ([], [], [])
         // Detected only when it will be used: nothing is picked by hand and matching is on.
         let detected = style.manualFont.isEmpty && style.autoFont
-            ? PlanStage.detectFont(page: page, path: path, pixelSize: px) : nil
-        let family = PlanStage.family(for: style) { detected?.family }
-        let boost = PlanStage.weightBoost(for: style, detected: detected)
-        let weights = PlanStage.fitWeights(path: path, matches: matches, ink: ink, family: family,
-                                           weightBoost: boost, style: style)
-        let sizes = PlanStage.fitSizes(matches: matches, ink: ink, family: family, weightBoost: boost,
+            ? BlockFontDetector(page: page, path: path, pixelSize: px).detect(matches)
+            : Array(repeating: nil, count: matches.count)
+        let families = detected.map { d in PlanStage.family(for: style) { d?.family } }
+        let boosts = detected.map { PlanStage.weightBoost(for: style, detected: $0) }
+        let weights = PlanStage.fitWeights(path: path, matches: matches, ink: ink, families: families,
+                                           weightBoosts: boosts, style: style)
+        let sizes = PlanStage.fitSizes(matches: matches, ink: ink, families: families, weightBoosts: boosts,
                                        weights: weights, style: style, pixelSize: px)
-        let tracks = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: sizes, family: family,
-                                            weightBoost: boost, weights: weights, style: style, pixelSize: px,
+        let tracks = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: sizes, families: families,
+                                            weightBoosts: boosts, weights: weights, style: style, pixelSize: px,
                                             imageScale: pointScale)
         let smooth = PlanStage.fitSmoothness(ink: ink, count: matches.count)
         return RenderPlan(pixelSize: px, imageScale: pointScale, matches: matches, bgColors: bg, ink: ink,
-                          matchedFonts: Array(repeating: family, count: matches.count),
-                          fontSizes: sizes, trackings: tracks, smoothness: smooth, weightBoost: boost,
+                          matchedFonts: families,
+                          fontSizes: sizes, trackings: tracks, smoothness: smooth, weightBoosts: boosts,
                           weights: weights, patches: patches)
+    }
+}
+
+/// How much better a block's own winner has to score on the block's lines than the page's winner
+/// does, before the block is drawn in its own family rather than the page's.
+let blockOverrideMargin = 0.05
+
+/// Font detection per block of text rather than once per image.
+///
+/// A page can set different text in different faces — a poster's condensed headline over a serif
+/// quote over a bold caption — and one answer for the whole image is then a compromise wrong for
+/// all of them. Each match is instead detected from its own block: its line together with the
+/// nearby lines of similar height in the same column.
+///
+/// A block has far fewer lines than a page, so taken on its own its answer is noisier: on a page
+/// set in one face, blocks flipped between two close families (Helvetica Neue and SF) and the
+/// overlays suffered. So a block overrides the page only when it clearly disagrees — its own winner
+/// beats the page's winner on the block's lines by blockOverrideMargin — which a headline in a
+/// different face does easily and noise does not. A block of fewer than three lines, one with no
+/// close match, and a match that cannot be placed on a line take the page's answer. Results are
+/// kept per block, so searching again on the same page reuses them.
+final class BlockFontDetector: @unchecked Sendable {   // the cache is guarded by `lock`
+    private let page: RecognizedPage
+    private let path: String
+    private let pixelSize: CGSize
+    private let lines: [TextMatch]
+    private let lock = NSLock()
+    private var blocks: [[Int]: DetectedFont?] = [:]
+    private var whole: DetectedFont??
+
+    init(page: RecognizedPage, path: String, pixelSize: CGSize) {
+        self.page = page
+        self.path = path
+        self.pixelSize = pixelSize
+        lines = page.allTextBoxes
+    }
+
+    func detect(_ matches: [TextMatch]) -> [DetectedFont?] { matches.map(detect) }
+
+    func detect(_ match: TextMatch) -> DetectedFont? {
+        guard let line = lineIndex(of: match) else { return pageFont() }
+        let block = self.block(around: line)
+        guard block.count >= 3 else { return pageFont() }
+        lock.lock()
+        if let known = blocks[block] { lock.unlock(); return known ?? pageFont() }
+        lock.unlock()
+        let ranking = rankFonts(forImage: block.map { (text: lines[$0].text, rect: lines[$0].rect) },
+                                path: path, pixelSize: pixelSize)
+        let page = pageFont()
+        var found = detection(from: ranking)
+        let ownScore = ranking.first?.score ?? 0
+        if let own = found, own.winner != page?.winner {
+            let pageScoreHere = page.flatMap { p in ranking.first { $0.family == p.winner }?.score } ?? 0
+            // Only a real family overrides the page: an SF winner is drawn as Noto Sans, which on
+            // these blocks fitted worse than the page's own family did. And where the page found
+            // nothing close, the block has to be well clear of the threshold itself.
+            let clear = page == nil ? ownScore >= 0.5 + 2 * blockOverrideMargin
+                                    : ownScore >= pageScoreHere + blockOverrideMargin
+            if own.standsInForSystemFont || !clear { found = page }
+        }
+        lock.lock(); blocks[block] = found; lock.unlock()
+        return found ?? page
+    }
+
+    /// The whole page's answer, worked out once.
+    func pageFont() -> DetectedFont? {
+        lock.lock()
+        if let known = whole { lock.unlock(); return known }
+        lock.unlock()
+        let found = PlanStage.detectFont(page: page, path: path, pixelSize: pixelSize)
+        lock.lock(); whole = .some(found); lock.unlock()
+        return found
+    }
+
+    /// In image pixels, since Vision's normalised rects measure x and y in different units.
+    private func pixels(_ r: CGRect) -> CGRect {
+        CGRect(x: r.minX * pixelSize.width, y: r.minY * pixelSize.height,
+               width: r.width * pixelSize.width, height: r.height * pixelSize.height)
+    }
+
+    /// The line the match lies on: the one its box overlaps most.
+    private func lineIndex(of match: TextMatch) -> Int? {
+        let m = pixels(match.rect)
+        let overlaps = lines.indices.map { i -> CGFloat in
+            let o = pixels(lines[i].rect).intersection(m)
+            return o.isNull ? 0 : o.width * o.height
+        }
+        guard let best = overlaps.indices.max(by: { overlaps[$0] < overlaps[$1] }), overlaps[best] > 0 else { return nil }
+        return best
+    }
+
+    /// The line and the nearby lines of similar height in the same column: within a quarter of its
+    /// height either way, within six line heights above or below, and overlapping it across or no
+    /// more than two line heights to one side.
+    private func block(around index: Int) -> [Int] {
+        let l = pixels(lines[index].rect)
+        guard l.height > 0 else { return [index] }
+        return lines.indices.filter { i in
+            let r = pixels(lines[i].rect)
+            let ratio = r.height / l.height
+            guard ratio > 0.75, ratio < 1.33, abs(r.midY - l.midY) <= 6 * l.height else { return false }
+            return max(r.minX - l.maxX, l.minX - r.maxX) <= 2 * l.height
+        }
     }
 }
 
@@ -155,22 +259,24 @@ enum PlanStage {
     /// weight from the image (autoWeight) and the letters were isolated; the style's weight, with
     /// the stand-in's boost, otherwise. Depends on the family, since each has its own idea of
     /// bold. Noto Sans standing in for SF keeps its 30% boost and only chooses regular or bold.
-    static func fitWeights(path: String, matches: [TextMatch], ink: [InkSample?], family: String?,
-                           weightBoost: CGFloat, style: OverlayStyle) -> [MatchWeight] {
+    static func fitWeights(path: String, matches: [TextMatch], ink: [InkSample?], families: [String?],
+                           weightBoosts: [CGFloat], style: OverlayStyle) -> [MatchWeight] {
         let fixed = Array(repeating: MatchWeight(weight: style.weight), count: matches.count)
         guard style.autoWeight, !matches.isEmpty,
               let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return fixed }
         return matches.enumerated().map { i, m in
+            let family = families[safe: i] ?? nil, weightBoost = weightBoosts[safe: i] ?? 1
             guard let measured = ink[safe: i] ?? nil, measured.isolated else { return MatchWeight(weight: style.weight) }
             return matchedWeight(m.text, ink: measured.rect, image: image, family: family,
                                  design: style.design.font, weightBoost: weightBoost) ?? MatchWeight(weight: style.weight)
         }
     }
 
-    static func fitSizes(matches: [TextMatch], ink: [InkSample?], family: String?, weightBoost: CGFloat,
+    static func fitSizes(matches: [TextMatch], ink: [InkSample?], families: [String?], weightBoosts: [CGFloat],
                          weights: [MatchWeight], style: OverlayStyle, pixelSize px: CGSize) -> [CGFloat] {
         matches.enumerated().map { i, m -> CGFloat in
+            let family = families[safe: i] ?? nil, weightBoost = weightBoosts[safe: i] ?? 1
             let mw = weights[safe: i] ?? MatchWeight(weight: style.weight)
             let w = mw.weight.font, d = style.design.font
             // Fit to the ink measured off the image when there is any. Vision's box is the
@@ -190,10 +296,11 @@ enum PlanStage {
     }
 
     /// Spacing is fitted after the sizes, because it depends on the font at its final size.
-    static func fitTrackings(matches: [TextMatch], ink: [InkSample?], sizes: [CGFloat], family: String?,
-                             weightBoost: CGFloat, weights: [MatchWeight], style: OverlayStyle,
+    static func fitTrackings(matches: [TextMatch], ink: [InkSample?], sizes: [CGFloat], families: [String?],
+                             weightBoosts: [CGFloat], weights: [MatchWeight], style: OverlayStyle,
                              pixelSize px: CGSize, imageScale: CGFloat) -> [CGFloat] {
         matches.enumerated().map { i, m -> CGFloat in
+            let family = families[safe: i] ?? nil, weightBoost = weightBoosts[safe: i] ?? 1
             guard let measured = ink[safe: i] ?? nil, measured.isolated else { return 0 }
             let size = style.manualSize > 0 ? CGFloat(style.manualSize) * imageScale : (sizes[safe: i] ?? 12)
             let mw = weights[safe: i] ?? MatchWeight(weight: style.weight)
@@ -308,7 +415,7 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
                 ?? (plan.smoothness[safe: i] ?? 0) * k
             drawMatchText(m.text, ink: inkRect, box: boxRect, size: size, color: inkColor,
                           family: plan.matchedFonts[safe: i] ?? nil, weight: plan.weights[safe: i] ?? MatchWeight(weight: style.weight),
-                          weightBoost: plan.weightBoost, tracking: tracking, blur: blur, style: style, ctx: ctx)
+                          weightBoost: plan.weightBoosts[safe: i] ?? 1, tracking: tracking, blur: blur, style: style, ctx: ctx)
         }
         if style.showBoxes {
             let box = cgColor(hex: style.boxHex, fallback: .systemYellow)
