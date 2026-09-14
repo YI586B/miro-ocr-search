@@ -518,6 +518,12 @@ struct MatchInfoPopup: View {
                 colorRow("Text color", textColor)
                 colorRow("Background", bgColor)
             }
+            // Below this the letters are a handful of pixels tall, and the measurements everything
+            // is fitted to — ink, weight, spacing, font — are too coarse to match them closely.
+            if showText, boxSize.height > 0, boxSize.height < 16 {
+                Text("Small text (\(Int(boxSize.height.rounded())) px tall): the redrawn word is approximate.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if showBoxes {
                 if showText { Divider() }
                 row("Box size", "\(Int(boxSize.width.rounded()))×\(Int(boxSize.height.rounded())) px")

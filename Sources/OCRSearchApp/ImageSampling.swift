@@ -293,3 +293,169 @@ func sampledInk(at path: String, rects: [CGRect]) -> [InkSample?] {
     }
     return rects.map(sample)
 }
+
+// MARK: - removing the original letters
+
+/// The original letters of one match, painted out: an image the size of `rect` that is transparent
+/// except where the letters were, and there holds what is estimated to be behind them. Drawn over
+/// the image, it removes the old word without touching anything around it.
+struct CleanedPatch: @unchecked Sendable {   // CGImage is immutable once made
+    let image: CGImage
+    /// Where it goes, in image pixels, bottom-left origin (the export context's own coordinates).
+    let rect: CGRect
+}
+
+/// For each match whose letters were isolated, its letters painted out (see CleanedPatch).
+///
+/// This replaces covering the word with a flat rectangle of the background colour, bigger than the
+/// word. On a flat app background the two look the same. On a photo the rectangle showed as a solid
+/// block over hair or skin; and wherever the rectangle's margin reached a neighbour — the colon in
+/// "Background:" — it erased that too, while only the word was drawn back.
+///
+/// The letters are the pixels at least a little of the way from the background towards the ink
+/// colour (see sampledInk) inside the match's box, together with any such pixels joined to them
+/// just above or below it — display type often reaches past Vision's box, and the parts outside it
+/// used to be left behind as bars — but not ones that merely lie nearby, like the line above. They
+/// are widened by a pixel or two so their soft edges go as well, then filled from the pixels around
+/// them: each takes the nearest surrounding pixel to its left, right, top and bottom, weighted by
+/// closeness, so a flat colour stays exact and a gradient continues smoothly. nil where the letters
+/// were not isolated; the flat patch is used there instead.
+func cleanedPatches(at path: String, rects: [CGRect], ink: [InkSample?], backgrounds: [Color?]) -> [CleanedPatch?] {
+    guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return Array(repeating: nil, count: rects.count) }
+    let W = image.width, H = image.height
+    return rects.indices.map { i -> CleanedPatch? in
+        guard let sample = ink[safe: i] ?? nil, sample.isolated, let background = backgrounds[safe: i] ?? nil else { return nil }
+        let r = rects[i]
+        let box = CGRect(x: r.minX * CGFloat(W), y: (1 - r.maxY) * CGFloat(H),
+                         width: r.width * CGFloat(W), height: r.height * CGFloat(H))
+        let widen = max(1, Int((box.height * 0.04).rounded()))
+        let reach = Int((box.height * 0.3).rounded())   // how far past the box joined letters are followed
+        let margin = widen + 3
+        let region = box.insetBy(dx: CGFloat(-(2 + margin)), dy: CGFloat(-(reach + margin))).integral
+            .intersection(CGRect(x: 0, y: 0, width: W, height: H))
+        let w = Int(region.width), h = Int(region.height)
+        guard w > 2, h > 2,
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let data = ctx.data else { return nil }
+        // The region's pixels, top row first (CGContext rows run bottom-up in drawing, top-down in memory).
+        ctx.draw(image, in: CGRect(x: -region.minX, y: -(CGFloat(H) - region.maxY), width: CGFloat(W), height: CGFloat(H)))
+        let px = data.bindMemory(to: UInt8.self, capacity: w * h * 4)
+
+        let bg = NSColor(background), inkColor = NSColor(sample.color)
+        let b = (bg.redComponent * 255, bg.greenComponent * 255, bg.blueComponent * 255)
+        let axis = (inkColor.redComponent * 255 - b.0, inkColor.greenComponent * 255 - b.1, inkColor.blueComponent * 255 - b.2)
+        let axisLength2 = max(axis.0 * axis.0 + axis.1 * axis.1 + axis.2 * axis.2, 1)
+
+        // How far each pixel is towards the ink, 0 at the background and 1 at the ink.
+        func toward(_ x: Int, _ y: Int) -> CGFloat {
+            let o = (y * w + x) * 4
+            let d = (CGFloat(px[o]) - b.0, CGFloat(px[o + 1]) - b.1, CGFloat(px[o + 2]) - b.2)
+            return (d.0 * axis.0 + d.1 * axis.1 + d.2 * axis.2) / axisLength2
+        }
+        let bx0 = max(0, Int(box.minX - region.minX) - 2), bx1 = min(w - 1, Int(box.maxX - region.minX) + 2)
+        let by0 = max(0, Int(box.minY - region.minY) - 2), by1 = min(h - 1, Int(box.maxY - region.minY) + 2)
+        let ry0 = max(0, by0 - reach), ry1 = min(h - 1, by1 + reach)
+        guard bx1 > bx0, by1 > by0 else { return nil }
+        // How much the background itself varies towards the ink, from the band of pixels around the
+        // letters' reach: a flat screen barely does, a photo or a printed pattern does a lot, and on
+        // those "faintly towards the ink" is the texture, not the letters. Median-based, so the
+        // neighbouring words that also fall in the band do not count.
+        var band: [CGFloat] = []
+        for y in 0..<h {
+            for x in 0..<w where x < bx0 - 1 || x > bx1 + 1 || y < ry0 - 1 || y > ry1 + 1 { band.append(toward(x, y)) }
+        }
+        band.sort()
+        let median = band.isEmpty ? 0 : band[band.count / 2]
+        let spread = band.isEmpty ? 0 : band.map { abs($0 - median) }.sorted()[band.count / 2] * 1.4826
+        let faint = max(0.06, median + 4 * spread)
+        // Letters: inside the box, anything even faintly towards the ink (6%, or above the
+        // background's own variation); past it, only solid
+        // strokes (half way or more) joined to the solid strokes inside. Faint pixels are not
+        // followed: over a photo or a pattern the texture itself is faintly towards the ink, and
+        // following it spreads across everything nearby.
+        var letter = [Bool](repeating: false, count: w * h)
+        var solid = [Bool](repeating: false, count: w * h)
+        var queue: [Int] = []
+        for y in by0...by1 {
+            for x in bx0...bx1 {
+                let t = toward(x, y)
+                if t >= faint { letter[y * w + x] = true }
+                if t >= max(0.5, faint) { solid[y * w + x] = true; queue.append(y * w + x) }
+            }
+        }
+        while let k = queue.popLast() {
+            let x = k % w, y = k / w
+            for dy in -1...1 {
+                for dx in -1...1 {
+                    let xx = x + dx, yy = y + dy
+                    guard xx >= bx0, xx <= bx1, yy >= ry0, yy <= ry1, !solid[yy * w + xx],
+                          toward(xx, yy) >= max(0.5, faint) else { continue }
+                    solid[yy * w + xx] = true; letter[yy * w + xx] = true; queue.append(yy * w + xx)
+                }
+            }
+        }
+        // Widened, so the letters' soft edges are taken out with them.
+        var mask = letter
+        for y in 0..<h {
+            for x in 0..<w where letter[y * w + x] {
+                for dy in -widen...widen {
+                    for dx in -widen...widen {
+                        let yy = y + dy, xx = x + dx
+                        if yy >= 0, yy < h, xx >= 0, xx < w { mask[yy * w + xx] = true }
+                    }
+                }
+            }
+        }
+        guard mask.contains(true) else { return nil }
+
+        // Filled from the nearest surrounding pixels in each of the four directions, weighted by
+        // closeness: flat colour stays exact, a gradient carries across. Each is the average of the
+        // unmasked pixels around it, so a texture is carried across softened rather than drawn out
+        // into stripes.
+        var rgb = [(CGFloat, CGFloat, CGFloat)](repeating: (0, 0, 0), count: w * h)
+        func colour(_ k: Int) -> (CGFloat, CGFloat, CGFloat) {
+            let x = k % w, y = k / w
+            var sum = (CGFloat(0), CGFloat(0), CGFloat(0)), n: CGFloat = 0
+            for yy in max(0, y - 2)...min(h - 1, y + 2) {
+                for xx in max(0, x - 2)...min(w - 1, x + 2) where !mask[yy * w + xx] {
+                    let o = (yy * w + xx) * 4
+                    sum = (sum.0 + CGFloat(px[o]), sum.1 + CGFloat(px[o + 1]), sum.2 + CGFloat(px[o + 2])); n += 1
+                }
+            }
+            return n > 0 ? (sum.0 / n, sum.1 / n, sum.2 / n) : (CGFloat(px[k * 4]), CGFloat(px[k * 4 + 1]), CGFloat(px[k * 4 + 2]))
+        }
+        for y in 0..<h {
+            for x in 0..<w where mask[y * w + x] {
+                var sum = (CGFloat(0), CGFloat(0), CGFloat(0)), total: CGFloat = 0
+                for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                    var xx = x + dx, yy = y + dy, d: CGFloat = 1
+                    while xx >= 0, xx < w, yy >= 0, yy < h, mask[yy * w + xx] { xx += dx; yy += dy; d += 1 }
+                    guard xx >= 0, xx < w, yy >= 0, yy < h else { continue }
+                    let c = colour(yy * w + xx), weight = 1 / d
+                    sum = (sum.0 + c.0 * weight, sum.1 + c.1 * weight, sum.2 + c.2 * weight); total += weight
+                }
+                rgb[y * w + x] = total > 0 ? (sum.0 / total, sum.1 / total, sum.2 / total) : (b.0, b.1, b.2)
+            }
+        }
+
+        // Transparent except where letters were.
+        var out = [UInt8](repeating: 0, count: w * h * 4)
+        for k in 0..<(w * h) where mask[k] {
+            let c = rgb[k]
+            out[k * 4] = UInt8(max(0, min(255, c.0.rounded())))
+            out[k * 4 + 1] = UInt8(max(0, min(255, c.1.rounded())))
+            out[k * 4 + 2] = UInt8(max(0, min(255, c.2.rounded())))
+            out[k * 4 + 3] = 255
+        }
+        guard let provider = CGDataProvider(data: Data(out) as CFData),
+              let patch = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                                  provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        else { return nil }
+        return CleanedPatch(image: patch, rect: CGRect(x: region.minX, y: CGFloat(H) - region.maxY, width: region.width, height: region.height))
+    }
+}

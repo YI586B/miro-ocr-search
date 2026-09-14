@@ -192,6 +192,7 @@ From those:
 | **Size** | scaled so the string's glyph outlines match the measured ink height. |
 | **Spacing** | letter spacing set so the redrawn word spans the measured ink width. This is what stops a substitute font drifting across a word — on Verdana it is the difference between +8.7% too wide and −0.4%. |
 | **Smoothness** | blurred to the softness measured on the original, and left alone when the original is already the crisper of the two, since sharpening is not possible. |
+| **Covering the original** | only the original letters are taken out — their pixels, widened a little for soft edges, including parts that reach past Vision's box — and filled from the pixels around them, so a flat colour stays exact and a photo or gradient carries on through. Neighbouring text, such as a colon after the word, is left alone. Where the letters could not be isolated, or when you pick a Background colour, a flat patch is used instead. |
 | **Colours** | the sampled ink and background, with the pickers as fallbacks. |
 
 Change the font and size, spacing and smoothness are all refitted for it. That is the point: a

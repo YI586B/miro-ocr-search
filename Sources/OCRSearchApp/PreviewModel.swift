@@ -40,6 +40,8 @@ import OCRSearchCore
     @Published private(set) var trackings: [CGFloat] = []
     /// The weight each match is drawn in; see PlanStage.fitWeights.
     @Published private(set) var weights: [MatchWeight] = []
+    /// Each match's original letters painted out; see cleanedPatches.
+    private(set) var patches: [CleanedPatch?] = []
     @Published private(set) var smoothness: [CGFloat] = []
     /// The whole overlay, drawn by the same code that draws an export (overlayLayerImage) and
     /// laid over the photo, rather than assembled from a SwiftUI view per match. Two
@@ -82,7 +84,7 @@ import OCRSearchCore
         image = NSImage(contentsOfFile: path)
         failed = image == nil
         pixelSize = .zero; imageScale = 1
-        matches = []; bgColors = []; ink = []
+        matches = []; bgColors = []; ink = []; patches = []
         detection = nil; detectedFont = nil; family = nil; weightBoost = 1; detected = false; page = nil
         fontSizes = []; trackings = []; weights = []; smoothness = []; sizesFor = nil; trackingsFor = nil
         overlayLayer = nil
@@ -120,13 +122,13 @@ import OCRSearchCore
             let (q, m, p, recognised) = (query, searchMode, path, page)
             let found = await Task.detached(priority: .userInitiated) {
                 let matches = recognised.map { PlanStage.find(page: $0, query: q, searchMode: m) } ?? []
-                let (bg, ink) = PlanStage.sample(path: p, matches: matches)
-                return (matches: matches, bg: bg, ink: ink)
+                let (bg, ink, patches) = PlanStage.sample(path: p, matches: matches)
+                return (matches: matches, bg: bg, ink: ink, patches: patches)
             }.value
             guard gen == loadGeneration else { return }
             // Typed again while that ran: search for the newer text instead.
             guard q == query, m == searchMode else { continue }
-            matches = found.matches; bgColors = found.bg; ink = found.ink
+            matches = found.matches; bgColors = found.bg; ink = found.ink; patches = found.patches
             smoothness = PlanStage.fitSmoothness(ink: ink, count: matches.count)
             fontSizes = []; trackings = []; weights = []; sizesFor = nil; trackingsFor = nil
             // With the latest style, which may have changed while this ran.
@@ -195,7 +197,7 @@ import OCRSearchCore
         RenderPlan(pixelSize: pixelSize, imageScale: imageScale, matches: style.show ? matches : [],
                    bgColors: bgColors, ink: ink, matchedFonts: Array(repeating: family, count: matches.count),
                    fontSizes: fontSizes, trackings: trackings, smoothness: smoothness, weightBoost: weightBoost,
-                   weights: weights)
+                   weights: weights, patches: patches)
     }
 
     /// The style the overlay is drawn with.

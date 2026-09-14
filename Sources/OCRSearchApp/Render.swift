@@ -56,6 +56,8 @@ struct RenderPlan: Sendable {
     var weightBoost: CGFloat = 1
     /// The weight each match is drawn in; see PlanStage.fitWeights. Empty means the style's weight.
     var weights: [MatchWeight] = []
+    /// Each match's original letters painted out, where they were isolated; see cleanedPatches.
+    var patches: [CleanedPatch?] = []
 
     /// Every stage at once, as an export needs it: find the matches, sample each one's background
     /// and ink colour, auto-match a font family across the whole page, then fit a size, spacing
@@ -69,7 +71,7 @@ struct RenderPlan: Sendable {
             return RenderPlan(pixelSize: px, imageScale: pointScale, matches: [], bgColors: [], ink: [],
                               matchedFonts: [], fontSizes: [], trackings: [])
         }
-        let (bg, ink) = style.showText ? PlanStage.sample(path: path, matches: matches) : ([], [])
+        let (bg, ink, patches) = style.showText ? PlanStage.sample(path: path, matches: matches) : ([], [], [])
         // Detected only when it will be used: nothing is picked by hand and matching is on.
         let detected = style.manualFont.isEmpty && style.autoFont
             ? PlanStage.detectFont(page: page, path: path, pixelSize: px) : nil
@@ -86,7 +88,7 @@ struct RenderPlan: Sendable {
         return RenderPlan(pixelSize: px, imageScale: pointScale, matches: matches, bgColors: bg, ink: ink,
                           matchedFonts: Array(repeating: family, count: matches.count),
                           fontSizes: sizes, trackings: tracks, smoothness: smooth, weightBoost: boost,
-                          weights: weights)
+                          weights: weights, patches: patches)
     }
 }
 
@@ -112,9 +114,10 @@ enum PlanStage {
     }
 
     /// Each match's surrounding background colour, and its glyphs' colour and extent.
-    static func sample(path: String, matches: [TextMatch]) -> (bg: [Color?], ink: [InkSample?]) {
+    static func sample(path: String, matches: [TextMatch]) -> (bg: [Color?], ink: [InkSample?], patches: [CleanedPatch?]) {
         let rects = matches.map(\.rect)
-        return (sampledBackgroundColors(at: path, rects: rects), sampledInk(at: path, rects: rects))
+        let bg = sampledBackgroundColors(at: path, rects: rects), ink = sampledInk(at: path, rects: rects)
+        return (bg, ink, cleanedPatches(at: path, rects: rects, ink: ink, backgrounds: bg))
     }
 
     /// Auto-matches the whole image's text to one closest-looking installed font at once (see
@@ -278,11 +281,17 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
         if style.showText {
             let fill = (style.autoBg ? plan.bgColors[safe: i] ?? nil : nil)
                 .map(cgColor) ?? cgColor(hex: style.bgHex, fallback: .white)
-            // Snapped to whole pixels: the patch is a flat rectangle whose only job is to cover
-            // the original word, and a fractional edge would leave a half-lit row of the old text
-            // showing through as a faint line.
-            ctx.setFillColor(fill)
-            ctx.fill(padded.integral)
+            if style.autoBg, let patch = plan.patches[safe: i] ?? nil {
+                // The original letters painted out, leaving everything around them as it was.
+                ctx.draw(patch.image, in: CGRect(x: patch.rect.minX * k, y: patch.rect.minY * k,
+                                                 width: patch.rect.width * k, height: patch.rect.height * k))
+            } else {
+                // Snapped to whole pixels: the patch is a flat rectangle whose only job is to cover
+                // the original word, and a fractional edge would leave a half-lit row of the old
+                // text showing through as a faint line.
+                ctx.setFillColor(fill)
+                ctx.fill(padded.integral)
+            }
 
             let measured = plan.ink[safe: i] ?? nil
             let inkColor = (style.autoTextColor ? measured?.color : nil)
