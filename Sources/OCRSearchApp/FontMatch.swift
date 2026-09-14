@@ -35,6 +35,12 @@ private let curatedFontFamilies = [
     "Georgia", "Times New Roman", "Palatino", "Baskerville",
     "American Typewriter", "Charter", "Hoefler Text", "Big Caslon", "Cochin",
     "Didot", "Bodoni 72", "Noto Sans",
+    // Common UI and web text faces, used when installed: Mac and web captures are often set in
+    // one of these, and without it detection could only choose the nearest wrong family.
+    "Inter", "Roboto", "Open Sans", "Lato", "Source Sans 3", "Montserrat", "IBM Plex Sans", "PT Sans",
+    "PT Serif", "Merriweather", "Lora", "Iowan Old Style",
+    // Condensed and display faces, for posters and headlines.
+    "DIN Condensed", "DIN Alternate", "Impact", "Arial Narrow", "Rockwell", "Oswald", "Bebas Neue",
 ]
 
 /// The curated families actually present (and not monospace) on the machine running the app.
@@ -195,7 +201,9 @@ func rankFonts(forImage items: [(text: String, rect: CGRect)], path: String, pix
     // The lines to compare, longest first, each cut out of the image as ink strength.
     let lines = usable.indices
         .compactMap { i -> (text: String, ink: CGRect)? in
-            guard let s = ink[i] ?? nil, s.rect.height * H > 6, s.rect.width * W > 2 else { return nil }
+            // Only lines whose letters were isolated: elsewhere the cut-out is the texture behind
+            // them as much as the letters, and every family scores against noise.
+            guard let s = ink[i] ?? nil, s.isolated, s.rect.height * H > 6, s.rect.width * W > 2 else { return nil }
             return (usable[i].text, s.rect)
         }
         .sorted { $0.text.count > $1.text.count }
