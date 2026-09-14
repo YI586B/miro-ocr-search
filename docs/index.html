@@ -89,6 +89,10 @@
   p.intro { color: var(--muted); margin: 0 0 24px; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
+  /* Features: six cards, so two even rows of three rather than a row of four and a row of two. */
+  .grid.features { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 760px) { .grid.features { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 480px) { .grid.features { grid-template-columns: 1fr; } }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
   .card h3 { margin: 0 0 6px; font-size: 17px; }
   .card p { margin: 0; color: var(--muted); font-size: 15.5px; }
@@ -277,10 +281,10 @@
     <h2>Features</h2>
     <p class="intro">What the app can do.</p>
 
-    <div class="grid">
+    <div class="grid features">
       <div class="card">
         <h3>Instant search</h3>
-        <p>Once a folder has been read, results show up as fast as you can type.</p>
+        <p>Search any picture, image or scan with a search term, just like you would a normal text-based document. It uses OCR technology. Once a folder has been read, results show up as fast as you can type.</p>
       </div>
       <div class="card">
         <h3>Two ways to highlight</h3>
