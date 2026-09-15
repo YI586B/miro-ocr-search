@@ -153,7 +153,7 @@ the **View** menu (**Show Boxes**, **Show Text**).
 - **Boxes** draws an outline around each match. Its fill starts at 0%; the style panel's **Fill opacity** adds a translucent fill.
 - **Text** covers each match with a patch matching the background and redraws the word on top.
 
-With both on, the box is drawn over the redrawn text. Text is where the matching work happens.
+With both on, the box is drawn behind the redrawn text, so the text stays on top. Text is where the matching work happens.
 
 ### The hover card
 

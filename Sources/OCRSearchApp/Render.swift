@@ -442,7 +442,8 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
         let pad = boxRect.height * matchBoxPaddingFraction
         let padded = boxRect.insetBy(dx: -pad / 2, dy: -pad / 2)
 
-        // Text first, then the box: with both on, the box highlights the redrawn word.
+        // The original letters out first, then the box, then the redrawn word on top: with both on,
+        // the box sits behind the text rather than tinting it.
         if style.showText {
             let fill = (style.autoBg ? plan.bgColors[safe: i] ?? nil : nil)
                 .map(cgColor) ?? cgColor(hex: style.bgHex, fallback: .white)
@@ -457,7 +458,18 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
                 ctx.setFillColor(fill)
                 ctx.fill(padded.integral)
             }
-
+        }
+        if style.showBoxes {
+            let box = cgColor(hex: style.boxHex, fallback: .systemYellow)
+            ctx.setFillColor(box.copy(alpha: CGFloat(style.opacity)) ?? box)
+            ctx.fill(padded)
+            if style.outline {
+                ctx.setStrokeColor(box)
+                ctx.setLineWidth(max(1, boxRect.height * boxOutlineFraction))
+                ctx.stroke(padded)
+            }
+        }
+        if style.showText {
             let measured = plan.ink[safe: i] ?? nil
             let inkColor = (style.autoTextColor ? measured?.color : nil)
                 .map(cgColor) ?? cgColor(hex: style.textHex, fallback: .black)
@@ -476,16 +488,6 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
             drawMatchText(m.text, ink: inkRect, box: boxRect, size: size, color: inkColor,
                           family: plan.matchedFonts[safe: i] ?? nil, weight: plan.weights[safe: i] ?? MatchWeight(weight: style.weight),
                           weightBoost: plan.weightBoosts[safe: i] ?? 1, tracking: tracking, blur: blur, sharpen: sharpen, style: style, ctx: ctx)
-        }
-        if style.showBoxes {
-            let box = cgColor(hex: style.boxHex, fallback: .systemYellow)
-            ctx.setFillColor(box.copy(alpha: CGFloat(style.opacity)) ?? box)
-            ctx.fill(padded)
-            if style.outline {
-                ctx.setStrokeColor(box)
-                ctx.setLineWidth(max(1, boxRect.height * boxOutlineFraction))
-                ctx.stroke(padded)
-            }
         }
     }
 }
