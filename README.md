@@ -3,26 +3,22 @@
 This branch holds the latest built disk image only. The source is on
 [`main`](https://github.com/YI586B/miro-ocr-search/tree/main).
 
-## Miro-ocr-search-1.3.dmg
+## Miro-ocr-search-1.4.dmg
 
 | | |
 |---|---|
-| Version | 1.3 |
+| Version | 1.4 |
 | Requires | macOS 13 Ventura or later, Apple Silicon |
 | Size | 3.9M |
-| SHA-256 | `aeb557d5616ddd8201e324d31966b5273be4d3bb7b767629161afbbe7965bb6d` |
+| SHA-256 | `f68dc8e31c4d989ca4e839d664ccfbbebb0c4e01f0f1e9f4566f6d607753bfaa` |
 
-What's new since 1.2:
+What's new since 1.3:
 
-- Redrawn words keep their colours: dark text on a light background is no longer redrawn light.
-- No more blurred words, and words inside a URL or with punctuation attached stay in place.
-- Bold words are redrawn bold: the weight of each word is matched from the image.
-- The original letters are taken out on their own, so the new word blends into photos and
-  gradients instead of sitting on a coloured block, and a colon after the word stays.
-- Font detection knows more fonts, and a block set in a clearly different face (a condensed
-  headline, say) gets its own font.
-- The style panel says when a font picked by hand, or an image's own saved look, is in effect, with
-  a way back to detection; Settings can clear every image's saved look.
+- The softness of each redrawn word's edges is matched to the original, both ways: a slightly
+  blurred original gets a matching blur, a crisper one gets sharper edges. The style panel's
+  Smoothness setting is now Edges (above 0 softer, below 0 crisper).
+- Where the app draws Noto Sans in place of Apple's system font, edges are left as drawn.
+- With Boxes and Text both on, the box now sits behind the redrawn word, so the text stays on top.
 
 It is a search tool, not an image editor: it finds text in your images and shows where it is.
 Images it outputs carry a Miro watermark, because the app uses Miro's libraries.
@@ -41,7 +37,7 @@ developer cannot be verified or that the app is damaged. Neither means the downl
 
 Verify what you downloaded:
 
-    shasum -a 256 ~/Downloads/Miro-ocr-search-1.3.dmg
+    shasum -a 256 ~/Downloads/Miro-ocr-search-1.4.dmg
 
 Building from source avoids the quarantine entirely; see the
 [guide](https://github.com/YI586B/miro-ocr-search/blob/main/GUIDE.md).
