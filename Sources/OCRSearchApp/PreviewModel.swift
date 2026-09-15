@@ -45,6 +45,8 @@ import OCRSearchCore
     /// Each match's original letters painted out; see cleanedPatches.
     private(set) var patches: [CleanedPatch?] = []
     @Published private(set) var smoothness: [CGFloat] = []
+    /// Sharpening per match; see PlanStage.fitEdges.
+    @Published private(set) var sharpness: [CGFloat] = []
     /// The whole overlay, drawn by the same code that draws an export (overlayLayerImage) and
     /// laid over the photo, rather than assembled from a SwiftUI view per match. Two
     /// implementations of the same drawing could not both be aligned to the ink; this way the
@@ -90,7 +92,7 @@ import OCRSearchCore
         pixelSize = .zero; imageScale = 1
         matches = []; bgColors = []; ink = []; patches = []
         detections = []; families = []; weightBoosts = []; detected = false; page = nil; detector = nil
-        fontSizes = []; trackings = []; weights = []; smoothness = []; sizesFor = nil; trackingsFor = nil
+        fontSizes = []; trackings = []; weights = []; smoothness = []; sharpness = []; sizesFor = nil; trackingsFor = nil
         overlayLayer = nil
         guard image != nil else { return }
 
@@ -134,7 +136,6 @@ import OCRSearchCore
             // Typed again while that ran: search for the newer text instead.
             guard q == query, m == searchMode else { continue }
             matches = found.matches; bgColors = found.bg; ink = found.ink; patches = found.patches
-            smoothness = PlanStage.fitSmoothness(ink: ink, count: matches.count)
             fontSizes = []; trackings = []; weights = []; sizesFor = nil; trackingsFor = nil
             // Detection is per match now, so new matches need their blocks looked up.
             detections = []; detected = false
@@ -191,6 +192,12 @@ import OCRSearchCore
             trackingsFor = trackingInputs
             trackings = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: fontSizes, families: fam,
                                                weightBoosts: boost, weights: weights, style: latest, pixelSize: pixelSize, imageScale: imageScale)
+            // Edges depend on the font at its final size, like spacing.
+            let edges = PlanStage.fitEdges(matches: matches, ink: ink, sizes: fontSizes, families: fam,
+                                           weightBoosts: boost, weights: weights,
+                                           standIns: found.map { PlanStage.standsIn(for: latest, detected: $0) },
+                                           style: latest, imageScale: imageScale)
+            smoothness = edges.blur; sharpness = edges.sharpen
         }
         rebuildOverlay()
     }
@@ -201,7 +208,8 @@ import OCRSearchCore
     var plan: RenderPlan {
         RenderPlan(pixelSize: pixelSize, imageScale: imageScale, matches: style.show ? matches : [],
                    bgColors: bgColors, ink: ink, matchedFonts: matches.indices.map { families[safe: $0] ?? nil },
-                   fontSizes: fontSizes, trackings: trackings, smoothness: smoothness, weightBoosts: weightBoosts,
+                   fontSizes: fontSizes, trackings: trackings, smoothness: smoothness, sharpness: sharpness,
+                   weightBoosts: weightBoosts,
                    weights: weights, patches: patches)
     }
 

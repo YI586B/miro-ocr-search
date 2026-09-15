@@ -546,37 +546,37 @@ func inkDrawOrigin(for text: String, font: NSFont, tracking: CGFloat, kerning: B
 
 // MARK: - matching how soft the original's edges are
 
-/// The edge softness text drawn by drawMatchText comes out with, in pixels of 20-80% rise.
+/// The edge softness our own drawing comes out with, in pixels of 20-80% rise, measured the way
+/// the originals are (see edgeRise). Each match now measures its own word in its own font and size
+/// (PlanStage.fitEdges); this is the fallback when that cannot be measured, and what the self-test
+/// checks the drawing against.
 ///
-/// Measured across four families at three sizes: our own drawing lands between 1.18 and 1.35 and
-/// does not vary meaningfully with size or family, because it is set by the rasteriser's
-/// antialiasing rather than by the glyphs. A constant is therefore honest here, and far cheaper
-/// than rendering each match twice to find out.
-let drawnEdgeRise: CGFloat = 1.28
+/// It was 1.28 while edges were measured in whole pixels, which could only answer 1, 2 or 3 and
+/// read everything about a quarter pixel soft. Measured between the pixels, our drawing comes out
+/// at about 1.05 across four families and three sizes — crisper than iPhone text (median 1.30),
+/// which the old figure had made look already matched, and on a par with Mac text (1.00).
+let drawnEdgeRise: CGFloat = 1.05
 
-/// A Gaussian blur, as a standard deviation in pixels, that takes text from `drawnEdgeRise` to the
+/// Below this difference between the original's edges and ours, nothing is done either way: the
+/// measurement is only good to a few hundredths of a pixel.
+let edgeDeadBand: CGFloat = 0.05
+
+/// A Gaussian blur, as a standard deviation in pixels, that takes text from `drawnRise` to the
 /// softness measured on the original.
 ///
 /// Blurring convolves the two edge profiles, so their widths add in quadrature: an edge of width
 /// `a` blurred by a Gaussian of width `b` comes out at sqrt(a² + b²). Solving for the blur gives
-/// the expression below, where a Gaussian's own 20-80% rise is 1.683 sigma.
-///
-/// In practice this lands the drawn edge most of the way to the target rather than exactly on it
-/// — measured, a 1.27px edge asked to reach 1.56px arrived at 1.49px. The model is approximate
-/// (CIGaussianBlur's radius is not quite a standard deviation, and drawnEdgeRise is a constant
-/// where the real figure varies by a tenth of a pixel or so), and the measurement itself is coarse
-/// at this scale, since an edge width of about one pixel is being read off a whole-pixel grid.
-/// Calibrating a correction out of numbers that noisy would be fitting the noise; the manual
-/// override is there for anyone who wants to push it further.
-///
-/// Zero when the original is no softer than what we draw. Sharpening is not on the table — the
-/// detail a resample took out is gone — so the honest answer there is to leave it alone, which is
-/// also what the measurements say to do: across eight matches the original was the *crisper* one
-/// in three of them.
-func smoothnessToMatch(originalRise: CGFloat) -> CGFloat {
-    guard originalRise > drawnEdgeRise else { return 0 }
-    return (originalRise * originalRise - drawnEdgeRise * drawnEdgeRise).squareRoot() / 1.683
+/// the expression below, where a Gaussian's own 20-80% rise is 1.683 sigma. Zero unless the
+/// original is the softer by more than edgeDeadBand; a crisper original is sharpened towards
+/// instead (see PlanStage.fitEdges).
+func smoothnessToMatch(originalRise: CGFloat, drawnRise: CGFloat = drawnEdgeRise) -> CGFloat {
+    guard originalRise > drawnRise + edgeDeadBand else { return 0 }
+    return (originalRise * originalRise - drawnRise * drawnRise).squareRoot() / 1.683
 }
+
+/// The most our drawing is ever sharpened by (see sharpenedText): past this, antialiased edges
+/// start to look stepped.
+let maximumSharpening: CGFloat = 1.6
 
 // MARK: - system-font helpers
 

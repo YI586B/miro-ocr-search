@@ -16,29 +16,25 @@ struct MatchView: View {
     var italic: Bool = false
 
     var body: some View {
-        ZStack {
-            if showText {
-                let w = weight.font, d = design.font
-                // .leading, not the default .center: the substitute font's natural width rarely
-                // matches the original's exactly (that's the whole reason fitting exists), so
-                // centering left as much slack on the left as the right, drifting the text's
-                // start away from where the original text actually began. Anchoring the left
-                // edge instead keeps it aligned with the source regardless of any width slack.
-                ZStack(alignment: .leading) {
-                    Rectangle().fill(background)
-                    Text(text).font(.system(size: fontSize, weight: w, design: d))
-                    .italic(italic)
-                    .foregroundStyle(textColor)
-                    .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
-                }
-                .frame(width: size.width, height: size.height)
-            }
+        // Background patch, then the box, then the text on top — the order the overlay is drawn in.
+        // .leading, not the default .center: the substitute font's natural width rarely matches
+        // the original's exactly (that's the whole reason fitting exists), so centering left as
+        // much slack on the left as the right, drifting the text's start away from where the
+        // original text actually began. Anchoring the left edge keeps it aligned with the source.
+        ZStack(alignment: .leading) {
+            if showText { Rectangle().fill(background) }
             if showBoxes {
                 Rectangle().fill(box.opacity(opacity))
                     .overlay(Rectangle().stroke(box, lineWidth: outline ? 2 : 0))
-                    .frame(width: size.width, height: size.height)
+            }
+            if showText {
+                Text(text).font(.system(size: fontSize, weight: weight.font, design: design.font))
+                    .italic(italic)
+                    .foregroundStyle(textColor)
+                    .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
             }
         }
+        .frame(width: size.width, height: size.height)
     }
 }
 

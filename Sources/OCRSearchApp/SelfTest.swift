@@ -23,6 +23,7 @@ import OCRSearchCore
         guard fontDetectionHolds(images: URL(fileURLWithPath: a[i + 1])) else { exit(1) }
         guard weightBoostRuleHolds() else { exit(1) }
         guard ownLookRulesHold() else { exit(1) }
+        guard edgeCalibrationHolds() else { exit(1) }
         run(images: URL(fileURLWithPath: a[i + 1]), out: URL(fileURLWithPath: a[i + 2]))
         exit(0)
     }
@@ -122,6 +123,39 @@ import OCRSearchCore
         for p in problems { print("FAILED own look: \(p)") }
         if problems.isEmpty { print("own look: kept only while it differs from the defaults") }
         return problems.isEmpty
+    }
+
+    /// How soft our own drawing is, measured as the originals are, across families and sizes —
+    /// what drawnEdgeRise is set from — and whether sharpening by a factor narrows it by that
+    /// factor. Printed for the log; fails if either is off by more than it should be.
+    static func edgeCalibrationHolds() -> Bool {
+        let samples = ["Screen Active", "Background", "observability", "The world is watching"]
+        var plain: [CGFloat] = [], ok = true
+        for family in ["Noto Sans", "Helvetica Neue", "Georgia", "Palatino"] {
+            for size in [14.0, 22.0, 40.0] {
+                guard let f = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: CGFloat(size)) else { continue }
+                for t in samples { if let r = drawnEdgeRise(of: t, font: f) { plain.append(r) } }
+            }
+        }
+        let mean = plain.reduce(0, +) / CGFloat(max(plain.count, 1))
+        let sorted = plain.sorted()
+        print(String(format: "edge: our drawing rises over %.3f px (range %.3f-%.3f over %d samples); constant is %.3f",
+                     mean, sorted.first ?? 0, sorted.last ?? 0, plain.count, drawnEdgeRise))
+        if abs(mean - drawnEdgeRise) > 0.08 { print("FAILED edge: drawnEdgeRise is off the measured drawing"); ok = false }
+        // Sharpening has to narrow the edge, more for a larger factor. Not by the factor itself:
+        // at a pixel or so wide there is little ramp to steepen, which is why fitEdges searches for
+        // the factor rather than computing it.
+        if let f = NSFontManager.shared.font(withFamily: "Noto Sans", traits: [], weight: 5, size: 22) {
+            var previous = drawnEdgeRise(of: "Background", font: f) ?? 0
+            let base = previous
+            for factor in [1.15, 1.3, maximumSharpening] as [CGFloat] {
+                let sharp = drawnEdgeRise(of: "Background", font: f, sharpen: factor) ?? 0
+                print(String(format: "edge: sharpen x%.2f takes %.3f px to %.3f px", factor, base, sharp))
+                if sharp >= previous { print("FAILED edge: sharpening did not narrow the edge further"); ok = false }
+                previous = sharp
+            }
+        }
+        return ok
     }
 
     /// A per-image style as saved by earlier versions — with the old Boxes-or-Text `mode` and
@@ -274,6 +308,14 @@ import OCRSearchCore
             if model.weights != weights { wrong.append("weights") }
             if !same(model.fontSizes, sizes) { wrong.append("sizes") }
             if !same(model.trackings, trackings) { wrong.append("spacing") }
+            let edges = PlanStage.fitEdges(matches: model.matches, ink: model.ink, sizes: sizes, families: family,
+                                           weightBoosts: boost, weights: weights,
+                                           standIns: found.map { PlanStage.standsIn(for: s, detected: $0) },
+                                           style: s, imageScale: model.imageScale)
+            for (i, d) in found.enumerated() where PlanStage.standsIn(for: s, detected: d) {
+                if (model.smoothness[safe: i] ?? 0) != 0 || (model.sharpness[safe: i] ?? 1) != 1 { wrong.append("stand-in edges not 0") }
+            }
+            if !same(model.smoothness, edges.blur) || !same(model.sharpness, edges.sharpen) { wrong.append("edges") }
             if model.drawingStyle != s { wrong.append("style") }
             if !wrong.isEmpty { state.problems.append("after \(step): stale \(wrong.joined(separator: ", "))") }
         }
@@ -324,6 +366,7 @@ import OCRSearchCore
             "fontSizes": plan.fontSizes.map(Double.init),
             "trackings": plan.trackings.map(Double.init),
             "smoothness": plan.smoothness.map(Double.init),
+            "sharpness": plan.sharpness.map(Double.init),
         ]
     }
 }

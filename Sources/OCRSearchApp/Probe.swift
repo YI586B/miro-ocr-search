@@ -91,6 +91,7 @@ import CryptoKit
                 report += " size \(String(format: "%.1f", (plan.fontSizes[safe: i] ?? 0) / plan.imageScale))pt"
                 report += " spacing \(String(format: "%.2f", (plan.trackings[safe: i] ?? 0) / plan.imageScale))pt"
                 report += " blur \(String(format: "%.2f", plan.smoothness[safe: i] ?? 0))"
+                report += " sharpen \(String(format: "%.2f", plan.sharpness[safe: i] ?? 1))"
                 report += " weight \(plan.weights[safe: i].map { w in w.axis.map { "\(Int($0))" } ?? w.weight.rawValue } ?? "-")\n"
                 if let side = sideBySide(path: path, rendered: png, around: ink?.rect ?? m.rect, pixelSize: plan.pixelSize) {
                     try? side.write(to: out.appendingPathComponent("\(name)-match\(i + 1).png"))
@@ -146,7 +147,7 @@ import CryptoKit
         print("\(urls.count) images, \(images.count) distinct")
         var style = OverlayStyle()
         style.showBoxes = false; style.showText = true; style.autoFont = true; style.manualFont = ""
-        var tsv = "image\tpixels\tword\tmatch\tlineH\tinkOverVisionH\tedge\tblur\tsizePt\tspacingPt\tdetected\tstandIn\ttop3\tsimilarity\tinverted\twholeLineBox\n"
+        var tsv = "image\tpixels\tword\tmatch\tlineH\tinkOverVisionH\tedge\tblur\tsizePt\tspacingPt\tdetected\tstandIn\ttop3\tsimilarity\tinverted\twholeLineBox\tsharpen\n"
         for (n, url) in images.enumerated() {
             let path = url.path, name = url.deletingPathExtension().lastPathComponent
             guard let page = try? RecognizedPage(at: url), let px = imagePixelSize(at: path) else { continue }
@@ -191,7 +192,8 @@ import CryptoKit
                             String(format: "%.2f", (plan.trackings[safe: i] ?? 0) / plan.imageScale),
                             (model.detections[safe: i] ?? nil)?.family ?? "-",
                             (model.detections[safe: i] ?? nil)?.standsInForSystemFont == true ? "yes" : "no",
-                            top3, String(format: "%.3f", sim), inverted ? "yes" : "no", wholeLine ? "yes" : "no"]
+                            top3, String(format: "%.3f", sim), inverted ? "yes" : "no", wholeLine ? "yes" : "no",
+                            String(format: "%.2f", plan.sharpness[safe: i] ?? 1)]
                         .joined(separator: "\t") + "\n"
                     if let side = sideBySide(path: path, rendered: png, around: ink?.rect ?? m.rect, pixelSize: px) {
                         let safeWord = word.replacingOccurrences(of: "/", with: "-")

@@ -131,6 +131,49 @@ struct InkSample: Sendable {
     var isolated: Bool = true
 }
 
+/// How soft a set of edges are: the mean distance, in samples, over which a stroke goes from 20% to
+/// 80% of its contrast, over every rising and falling edge in `rows`. Each row holds how far each
+/// pixel is from the background towards the ink (0 to 1).
+///
+/// Where each edge crosses 20% and 80% is found between the pixels, by interpolating, rather than
+/// by counting whole pixels: an edge is only one or two pixels wide, and a count could only answer
+/// 1, 2 or 3 — too coarse to tell a native screenshot (about 1.1-1.3) from our own drawing, or to
+/// decide which of the two is the crisper. The same measure is applied to our own drawn text (see
+/// drawnEdgeRise), so the two are compared like for like.
+func edgeRise(rows: [[CGFloat]]) -> CGFloat? {
+    var rises: [CGFloat] = []
+    for row in rows {
+        guard let hi = row.max(), hi > 0.05, row.count > 1 else { continue }
+        let low = hi * 0.2, high = hi * 0.8
+        // Where the row crosses `level` between i-1 and i, as a fractional position.
+        func crossing(_ i: Int, _ level: CGFloat) -> CGFloat {
+            let a = row[i - 1], b = row[i]
+            return CGFloat(i - 1) + (b == a ? 0.5 : (level - a) / (b - a))
+        }
+        var risingFrom: CGFloat? = nil, fallingFrom: CGFloat? = nil
+        for i in 1..<row.count {
+            let a = row[i - 1], b = row[i]
+            // Rising: through 20%, then through 80%.
+            if a < low, b >= low { risingFrom = crossing(i, low) }
+            if a < high, b >= high, let start = risingFrom {
+                let d = crossing(i, high) - start
+                if d > 0, d <= 8 { rises.append(d) }
+                risingFrom = nil
+            }
+            if b < low { risingFrom = nil }
+            // Falling: through 80%, then through 20%.
+            if a >= high, b < high { fallingFrom = crossing(i, high) }
+            if a >= low, b < low, let start = fallingFrom {
+                let d = crossing(i, low) - start
+                if d > 0, d <= 8 { rises.append(d) }
+                fallingFrom = nil
+            }
+            if b >= high { fallingFrom = nil }
+        }
+    }
+    return rises.isEmpty ? nil : rises.reduce(0, +) / CGFloat(rises.count)
+}
+
 /// Above this, a measured edge softness is not believed: text that soft has not been seen on a
 /// real capture (native screenshots measure ~1.4px, a 12% upscale ~1.55px), and values like it come
 /// from measuring across something that is not a clean glyph edge.
@@ -265,28 +308,18 @@ func sampledInk(at path: String, rects: [CGRect]) -> [InkSample?] {
                              height: CGFloat(maxY + step - minY) / CGFloat(h))
         let boxHeight = CGFloat(pxY1 - pxY0 + 1)
         let isolated = CGFloat(maxY + step - minY) < boxHeight * isolatedInkHeightLimit
-        // Edge softness, from the same rows: for each horizontal run that climbs from background
-        // to ink, how far it takes to go from 20% to 80% of the way. Measured here because this is
-        // the one place that already knows where the ink is and what it contrasts against.
-        var rises: [CGFloat] = []
+        // Edge softness, from the same rows — see edgeRise. Measured here because this is the one
+        // place that already knows where the ink is and what it contrasts against.
+        var rows: [[CGFloat]] = []
         for py in stride(from: max(minY, pxY0), through: min(maxY, pxY1), by: step) where isolated {
             var row: [CGFloat] = []
             for px in stride(from: minX, through: maxX, by: step) {
                 guard let c = rep.colorAt(x: px, y: py) else { row.append(0); continue }
                 row.append(max(0, along((c.redComponent, c.greenComponent, c.blueComponent)).t))
             }
-            guard let hi = row.max(), hi > 0.05 else { continue }
-            let t20 = hi * 0.2, t80 = hi * 0.8
-            var start: Int? = nil
-            for i in row.indices {
-                if row[i] >= t20 && row[i] < t80 { if start == nil { start = i } }
-                else {
-                    if let st = start, row[i] >= t80, i - st <= 8 { rises.append(CGFloat((i - st) * step)) }
-                    start = nil
-                }
-            }
+            rows.append(row)
         }
-        let measured = rises.isEmpty ? 0 : rises.reduce(0, +) / CGFloat(rises.count)
+        let measured = (edgeRise(rows: rows) ?? 0) * CGFloat(step)
         // Only a softness measured on isolated letters, and a believable one, is matched.
         let rise = isolated && measured <= maximumTrustedEdgeRise ? measured : 0
         return InkSample(rect: isolated ? inkRect : rect, color: color, edgeRise: rise, isolated: isolated)
