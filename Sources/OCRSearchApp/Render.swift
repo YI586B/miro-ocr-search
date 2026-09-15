@@ -51,6 +51,8 @@ struct RenderPlan: Sendable {
     var trackings: [CGFloat]
     /// Blur fitted per match so the redrawn text is as soft as the text it covers.
     var smoothness: [CGFloat] = []
+    /// How much each match's edges are sharpened (1 = not at all); see PlanStage.fitEdges.
+    var sharpness: [CGFloat] = []
     /// How much heavier the matched family is drawn; 1 except where Noto Sans stands in for SF.
     /// See PlanStage.weightBoost.
     var weightBoosts: [CGFloat] = []
@@ -85,10 +87,12 @@ struct RenderPlan: Sendable {
         let tracks = PlanStage.fitTrackings(matches: matches, ink: ink, sizes: sizes, families: families,
                                             weightBoosts: boosts, weights: weights, style: style, pixelSize: px,
                                             imageScale: pointScale)
-        let smooth = PlanStage.fitSmoothness(ink: ink, count: matches.count)
+        let edges = PlanStage.fitEdges(matches: matches, ink: ink, sizes: sizes, families: families,
+                                       weightBoosts: boosts, weights: weights, style: style, imageScale: pointScale)
         return RenderPlan(pixelSize: px, imageScale: pointScale, matches: matches, bgColors: bg, ink: ink,
                           matchedFonts: families,
-                          fontSizes: sizes, trackings: tracks, smoothness: smooth, weightBoosts: boosts,
+                          fontSizes: sizes, trackings: tracks, smoothness: edges.blur, sharpness: edges.sharpen,
+                          weightBoosts: boosts,
                           weights: weights, patches: patches)
     }
 }
@@ -312,8 +316,50 @@ enum PlanStage {
     }
 
     /// Softness comes straight from what was measured on the image, so it needs no font.
-    static func fitSmoothness(ink: [InkSample?], count: Int) -> [CGFloat] {
-        (0..<count).map { i in smoothnessToMatch(originalRise: (ink[safe: i] ?? nil)?.edgeRise ?? 0) }
+    ///
+    /// Each match is compared with our own drawing of the same word in the font and size it is
+    /// drawn in, both measured the same way (edgeRise): a softer original is blurred towards, a
+    /// crisper one sharpened towards. Neither follows its formula at this scale, so both amounts are
+    /// found by trying them — bisection against our drawing, blurred or sharpened, as measured: the
+    /// system blur softens more than a Gaussian past about 0.3px, and with edges a pixel or so wide
+    /// there is little ramp left to steepen (a factor of 1.5 narrows one by about 15%, not a third).
+    static func fitEdges(matches: [TextMatch], ink: [InkSample?], sizes: [CGFloat], families: [String?],
+                         weightBoosts: [CGFloat], weights: [MatchWeight], style: OverlayStyle,
+                         imageScale: CGFloat) -> (blur: [CGFloat], sharpen: [CGFloat]) {
+        let edges = matches.enumerated().map { i, m -> (CGFloat, CGFloat) in
+            guard let measured = ink[safe: i] ?? nil, measured.isolated, measured.edgeRise > 0 else { return (0, 1) }
+            let mw = weights[safe: i] ?? MatchWeight(weight: style.weight)
+            let size = style.manualSize > 0 ? CGFloat(style.manualSize) * imageScale : (sizes[safe: i] ?? 12)
+            let font = matchFont(size: size, weight: mw.weight.font, design: style.design.font,
+                                 matchedFamily: families[safe: i] ?? nil, weightBoost: weightBoosts[safe: i] ?? 1,
+                                 weightAxis: mw.axis)
+            let drawn = drawnEdgeRise(of: m.text, font: font) ?? drawnEdgeRise
+            let original = measured.edgeRise
+            if original > drawn + edgeDeadBand {
+                // Found by trying it, like sharpening: the system blur is not the textbook Gaussian
+                // the quadrature formula assumes, and past about 0.3px it softens far more — measured,
+                // 0.62px gave a 1.77px edge where the formula expected 1.52. The formula's answer is
+                // only the upper end of the search.
+                var lo: CGFloat = 0, hi = max(smoothnessToMatch(originalRise: original, drawnRise: drawn) * 1.5, 0.3)
+                if let softest = drawnEdgeRise(of: m.text, font: font, blur: hi), softest <= original { return (hi, 1) }
+                for _ in 0..<8 {
+                    let mid = (lo + hi) / 2
+                    guard let r = drawnEdgeRise(of: m.text, font: font, blur: mid) else { break }
+                    if r < original { lo = mid } else { hi = mid }
+                }
+                return (((lo + hi) / 2 * 100).rounded() / 100, 1)
+            }
+            guard original < drawn - edgeDeadBand else { return (0, 1) }
+            var lo: CGFloat = 1, hi = maximumSharpening
+            if let widest = drawnEdgeRise(of: m.text, font: font, sharpen: hi), widest >= original { return (0, hi) }
+            for _ in 0..<7 {
+                let mid = (lo + hi) / 2
+                guard let r = drawnEdgeRise(of: m.text, font: font, sharpen: mid) else { break }
+                if r > original { lo = mid } else { hi = mid }
+            }
+            return (0, ((lo + hi) / 2 * 100).rounded() / 100)
+        }
+        return (edges.map(\.0), edges.map(\.1))
     }
 }
 
@@ -411,11 +457,13 @@ func drawOverlay(in ctx: CGContext, canvas: CGSize, plan: RenderPlan, style: Ove
                                              : (plan.fontSizes[safe: i] ?? 12)) * k
             let tracking = style.manualTracking.map { CGFloat($0) * plan.imageScale }
                 ?? (plan.trackings[safe: i] ?? 0) * k
-            let blur = style.manualSmoothness.map { CGFloat($0) * plan.imageScale }
-                ?? (plan.smoothness[safe: i] ?? 0) * k
+            // A manual Edges value blurs when positive and sharpens when negative (-0.3 = 1.3x).
+            let manual = style.manualSmoothness.map { CGFloat($0) }
+            let blur = manual.map { $0 > 0 ? $0 * plan.imageScale : 0 } ?? (plan.smoothness[safe: i] ?? 0) * k
+            let sharpen = manual.map { $0 < 0 ? 1 - $0 : 1 } ?? (plan.sharpness[safe: i] ?? 1)
             drawMatchText(m.text, ink: inkRect, box: boxRect, size: size, color: inkColor,
                           family: plan.matchedFonts[safe: i] ?? nil, weight: plan.weights[safe: i] ?? MatchWeight(weight: style.weight),
-                          weightBoost: plan.weightBoosts[safe: i] ?? 1, tracking: tracking, blur: blur, style: style, ctx: ctx)
+                          weightBoost: plan.weightBoosts[safe: i] ?? 1, tracking: tracking, blur: blur, sharpen: sharpen, style: style, ctx: ctx)
         }
         if style.showBoxes {
             let box = cgColor(hex: style.boxHex, fallback: .systemYellow)
@@ -488,7 +536,7 @@ func configureTextQuality(_ ctx: CGContext) {
 /// line box and the whole point here is to position the baseline.
 private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFloat, color: CGColor,
                            family: String?, weight: MatchWeight, weightBoost: CGFloat, tracking: CGFloat,
-                           blur: CGFloat, style: OverlayStyle, ctx: CGContext) {
+                           blur: CGFloat, sharpen: CGFloat, style: OverlayStyle, ctx: CGContext) {
     var font = matchFont(size: size, weight: weight.weight.font,
                          design: style.design.font, matchedFamily: family)
     var shear: CGFloat = 0
@@ -518,6 +566,11 @@ private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFl
         ctx.draw(softened.image, in: softened.rect)
         return
     }
+    // Or steepened, when the original's edges are the crisper.
+    if sharpen > 1.01, let sharpened = sharpenedText(line: line, origin: origin, shear: shear, factor: sharpen, color: color) {
+        ctx.draw(sharpened.image, in: sharpened.rect)
+        return
+    }
     ctx.saveGState()
     if shear != 0 {
         ctx.translateBy(x: origin.x, y: origin.y)
@@ -530,14 +583,12 @@ private func drawMatchText(_ text: String, ink: CGRect?, box: CGRect, size: CGFl
     ctx.restoreGState()
 }
 
-/// The line rendered on its own and Gaussian-blurred, ready to composite where it belongs.
-///
-/// The margin is generous on purpose: a Gaussian does not stop at three sigma, and clipping its
-/// tail leaves a visible straight edge where the softness is cut off.
-private func blurredText(line: CTLine, origin: CGPoint, shear: CGFloat,
-                         blur: CGFloat) -> (image: CGImage, rect: CGRect)? {
+/// The line rendered on its own, into a scratch layer with `margin` pixels round it, and where
+/// that layer belongs: the starting point for softening or sharpening it before it is composited,
+/// since neither may touch what is underneath.
+private func renderedText(line: CTLine, origin: CGPoint, shear: CGFloat,
+                          margin: CGFloat) -> (image: CGImage, rect: CGRect)? {
     let bounds = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
-    let margin = ceil(blur * 4) + 2
     let w = Int(ceil(bounds.width + shear * bounds.height + margin * 2))
     let h = Int(ceil(bounds.height + margin * 2))
     guard w > 0, h > 0, w < 8000, h < 8000,
@@ -554,8 +605,20 @@ private func blurredText(line: CTLine, origin: CGPoint, shear: CGFloat,
     CTLineDraw(line, scratch)
     scratch.restoreGState()
     NSGraphicsContext.restoreGraphicsState()
-
     guard let drawn = scratch.makeImage() else { return nil }
+    let rect = CGRect(x: origin.x + bounds.minX - margin, y: origin.y + bounds.minY - margin,
+                      width: CGFloat(w), height: CGFloat(h))
+    return (drawn, rect)
+}
+
+/// The line rendered on its own and Gaussian-blurred, ready to composite where it belongs.
+///
+/// The margin is generous on purpose: a Gaussian does not stop at three sigma, and clipping its
+/// tail leaves a visible straight edge where the softness is cut off.
+private func blurredText(line: CTLine, origin: CGPoint, shear: CGFloat,
+                         blur: CGFloat) -> (image: CGImage, rect: CGRect)? {
+    guard let (drawn, rect) = renderedText(line: line, origin: origin, shear: shear, margin: ceil(blur * 4) + 2)
+    else { return nil }
     let input = CIImage(cgImage: drawn)
     guard let filter = CIFilter(name: "CIGaussianBlur",
                                 parameters: [kCIInputImageKey: input, kCIInputRadiusKey: blur]),
@@ -563,9 +626,61 @@ private func blurredText(line: CTLine, origin: CGPoint, shear: CGFloat,
           // clamped back to the scratch bounds: the filter's extent grows by the blur radius
           let blurred = CIContext(options: [.workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!])
             .createCGImage(output, from: input.extent) else { return nil }
-    let rect = CGRect(x: origin.x + bounds.minX - margin, y: origin.y + bounds.minY - margin,
-                      width: CGFloat(w), height: CGFloat(h))
     return (blurred, rect)
+}
+
+/// The line rendered on its own with its edges steepened by `factor`, ready to composite.
+///
+/// Each pixel's coverage is pushed away from half by `factor` — a quarter-covered edge pixel gets
+/// lighter, a three-quarters one darker — which narrows the antialiased ramp by the same factor
+/// without moving the edge itself, since coverage one half stays one half. Unlike an unsharp mask,
+/// nothing overshoots, so there is no light halo round the letters. `color` is the text's colour,
+/// which the coverage is reapplied to.
+private func sharpenedText(line: CTLine, origin: CGPoint, shear: CGFloat, factor: CGFloat,
+                           color: CGColor) -> (image: CGImage, rect: CGRect)? {
+    guard let (drawn, rect) = renderedText(line: line, origin: origin, shear: shear, margin: 2) else { return nil }
+    let w = drawn.width, h = drawn.height
+    guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+          let data = ctx.data else { return nil }
+    ctx.draw(drawn, in: CGRect(x: 0, y: 0, width: w, height: h))
+    let px = data.bindMemory(to: UInt8.self, capacity: w * h * 4)
+    let rgb = NSColor(cgColor: color)?.usingColorSpace(.sRGB) ?? .black
+    let c: [CGFloat] = [rgb.redComponent, rgb.greenComponent, rgb.blueComponent]
+    for k in 0..<(w * h) {
+        let a = CGFloat(px[k * 4 + 3]) / 255
+        guard a > 0, a < 1 else { continue }
+        let steeper = min(max(0.5 + (a - 0.5) * factor, 0), 1)
+        px[k * 4] = UInt8((c[0] * steeper * 255).rounded())
+        px[k * 4 + 1] = UInt8((c[1] * steeper * 255).rounded())
+        px[k * 4 + 2] = UInt8((c[2] * steeper * 255).rounded())
+        px[k * 4 + 3] = UInt8((steeper * 255).rounded())
+    }
+    guard let image = ctx.makeImage() else { return nil }
+    return (image, rect)
+}
+
+/// How soft our own drawing of `text` in `font` comes out, measured with edgeRise exactly as the
+/// originals are, after sharpening by `sharpen` (1 = none). What drawnEdgeRise is calibrated from,
+/// and how the self-test checks that sharpening narrows the edge by the factor asked for.
+func drawnEdgeRise(of text: String, font: NSFont, sharpen: CGFloat = 1, blur: CGFloat = 0) -> CGFloat? {
+    let line = CTLineCreateWithAttributedString(NSAttributedString(string: text,
+        attributes: [.font: font, .foregroundColor: NSColor.black, .ligature: 0]))
+    let layer = blur > 0.001
+        ? blurredText(line: line, origin: .zero, shear: 0, blur: blur)
+        : sharpen > 1.001
+        ? sharpenedText(line: line, origin: .zero, shear: 0, factor: sharpen, color: NSColor.black.cgColor)
+        : renderedText(line: line, origin: .zero, shear: 0, margin: 2)
+    guard let image = layer?.image, let ctx = CGContext(data: nil, width: image.width, height: image.height,
+                                                        bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                                                        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+          let data = ctx.data else { return nil }
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+    let px = data.bindMemory(to: UInt8.self, capacity: image.width * image.height * 4)
+    let rows = (0..<image.height).map { y in (0..<image.width).map { x in CGFloat(px[(y * image.width + x) * 4 + 3]) / 255 } }
+    return edgeRise(rows: rows)
 }
 
 /// The same bottom-right badge the preview stamps on every image, at the same pixel size and

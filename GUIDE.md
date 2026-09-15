@@ -191,11 +191,11 @@ From those:
 | **Weight** | per match, matched to how much of its box the original's letters cover (a bold heading comes out bold, body text regular). A variable font is set to the exact measured weight; other fonts choose regular or bold. Noto Sans standing in for SF keeps its 30% boost and only chooses regular or bold. Turn off *Match weight from image*, or press **B**, to use one weight for every match. |
 | **Size** | scaled so the string's glyph outlines match the measured ink height. |
 | **Spacing** | letter spacing set so the redrawn word spans the measured ink width. This is what stops a substitute font drifting across a word — on Verdana it is the difference between +8.7% too wide and −0.4%. |
-| **Smoothness** | blurred to the softness measured on the original, and left alone when the original is already the crisper of the two, since sharpening is not possible. |
+| **Edges** | each word's edges are measured on the original and on our own drawing of the same word, both to a fraction of a pixel. A softer original is matched with a slight blur; a crisper one by steepening our drawn edges (up to 1.6 times), which is searched for rather than computed, since at a pixel or so wide edges do not narrow in proportion. Differences under 0.05 px are left alone. |
 | **Covering the original** | only the original letters are taken out — their pixels, widened a little for soft edges, including parts that reach past Vision's box — and filled from the pixels around them, so a flat colour stays exact and a photo or gradient carries on through. Neighbouring text, such as a colon after the word, is left alone. Where the letters could not be isolated, or when you pick a Background colour, a flat patch is used instead. |
 | **Colours** | the sampled ink and background, with the pickers as fallbacks. |
 
-Change the font and size, spacing and smoothness are all refitted for it. That is the point: a
+Change the font and size, spacing and edges are all refitted for it. That is the point: a
 different typeface needs different numbers to sit in the same space.
 
 **Alignment** is to the ink, not to Vision's box — left edge to left edge, lowest ink to lowest
@@ -219,9 +219,9 @@ and the measured value returns:
   font is the opposite of matching one. Choosing **Auto** turns it back on.
 - *Match weight from image* — pressing **B** turns this off, since choosing a weight by hand is the
   opposite of matching one.
-- **Auto** beside Size, Spacing and Smoothness. Typing a value turns it off.
+- **Auto** beside Size, Spacing and Edges. Typing a value turns it off. Edges above 0 is a blur in points; below 0 sharpens (-0.3 is 1.3 times steeper).
 
-**B** and **I** sit on the Size row; **Kerning** is below Smoothness.
+**B** and **I** sit on the Size row; **Kerning** is below Edges.
 
 **⌘R Recalculate** re-reads the image and works every automatic value out again, discarding the
 manual ones. Use it if an image changed on disk or a scan went wrong.
@@ -230,7 +230,7 @@ manual ones. Use it if an image changed on disk or a scan went wrong.
 
 | per image | app-wide |
 |---|---|
-| font, size, spacing, smoothness, kerning, bold, italic, colours | overlay on/off |
+| font, size, spacing, edges, kerning, bold, italic, colours | overlay on/off |
 | | Boxes and Text |
 | | the watermark |
 
@@ -249,7 +249,7 @@ found, with **Use detected font** to switch back; when font matching is off, it 
 **Match font from image**. The hover card shows a picked font's detected alternative too.
 
 The panel ends with a **Reset** menu and **Save as Default** (make this look the starting point for
-images that have none). Reset offers **Font to Automatic** (font, size, spacing, smoothness, bold,
+images that have none). Reset offers **Font to Automatic** (font, size, spacing, edges, bold,
 italic and kerning back to automatic), **This Image to Defaults** (forget this image's settings)
 and **Recalculate Everything** (⌘R, above).
 

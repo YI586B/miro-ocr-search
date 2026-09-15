@@ -242,27 +242,33 @@ struct StyleInspector: View {
                 // Softness, matched to how soft the covered text's edges are. Text drawn
                 // fresh is crisper than text that has been through an image's
                 // resampling, and on an image that has been scaled the difference shows.
-                let fittedSmoothness = Double(((preview.smoothness.first ?? 0) / preview.imageScale * 100).rounded() / 100)
+                // Edges: positive softens (a blur, in points), negative sharpens (-0.3 = 1.3x steeper);
+                // what fitEdges found for the first match when nothing is typed.
+                let firstBlur = preview.smoothness.first ?? 0, firstSharpen = preview.sharpness.first ?? 1
+                let fittedSmoothness = firstBlur > 0
+                    ? Double((firstBlur / preview.imageScale * 100).rounded() / 100)
+                    : -Double(((firstSharpen - 1) * 100).rounded() / 100)
                 let smoothBinding = Binding<Double>(
                     get: { style.manualSmoothness ?? fittedSmoothness },
                     set: { typed in
                         guard style.manualSmoothness != nil || abs(typed - fittedSmoothness) >= 0.005
                         else { return }
-                        style.manualSmoothness = max(typed, 0)
+                        style.manualSmoothness = max(typed, -Double(maximumSharpening - 1))
                     }
                 )
                 HStack(spacing: 8) {
-                    Text("Smoothness").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)
+                    Text("Edges").font(.caption).foregroundStyle(.secondary).frame(width: 66, alignment: .leading)
                     TextField("", value: smoothBinding, format: .number.precision(.fractionLength(0...2)))
                         .textFieldStyle(.roundedBorder).frame(width: 46)
                         .multilineTextAlignment(.trailing)
-                    Stepper("", value: smoothBinding, in: 0...10, step: 0.05).labelsHidden()
+                    Stepper("", value: smoothBinding, in: -Double(maximumSharpening - 1)...10, step: 0.05).labelsHidden()
                     Text("pt").font(.caption).foregroundStyle(.secondary)
+                        .help("Above 0, a blur in points; below 0, sharper edges (-0.3 is 1.3 times steeper)")
                     Toggle("Auto", isOn: Binding(
                         get: { style.manualSmoothness == nil },
                         set: { on in style.manualSmoothness = on ? nil : fittedSmoothness }))
                         .toggleStyle(.button).controlSize(.small)
-                        .help("Soften the redrawn text to the same degree as the text it covers. Typing a value turns this off.")
+                        .help("Soften or sharpen the redrawn text's edges to match the text it covers. Typing a value turns this off; below 0 is sharper.")
                     Spacer()
                 }
                 Toggle("Kerning", isOn: $style.kerning)
