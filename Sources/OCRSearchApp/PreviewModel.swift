@@ -194,7 +194,9 @@ import OCRSearchCore
                                                weightBoosts: boost, weights: weights, style: latest, pixelSize: pixelSize, imageScale: imageScale)
             // Edges depend on the font at its final size, like spacing.
             let edges = PlanStage.fitEdges(matches: matches, ink: ink, sizes: fontSizes, families: fam,
-                                           weightBoosts: boost, weights: weights, style: latest, imageScale: imageScale)
+                                           weightBoosts: boost, weights: weights,
+                                           standIns: found.map { PlanStage.standsIn(for: latest, detected: $0) },
+                                           style: latest, imageScale: imageScale)
             smoothness = edges.blur; sharpness = edges.sharpen
         }
         rebuildOverlay()

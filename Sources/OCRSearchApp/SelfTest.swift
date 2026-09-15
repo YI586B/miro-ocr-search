@@ -309,7 +309,12 @@ import OCRSearchCore
             if !same(model.fontSizes, sizes) { wrong.append("sizes") }
             if !same(model.trackings, trackings) { wrong.append("spacing") }
             let edges = PlanStage.fitEdges(matches: model.matches, ink: model.ink, sizes: sizes, families: family,
-                                           weightBoosts: boost, weights: weights, style: s, imageScale: model.imageScale)
+                                           weightBoosts: boost, weights: weights,
+                                           standIns: found.map { PlanStage.standsIn(for: s, detected: $0) },
+                                           style: s, imageScale: model.imageScale)
+            for (i, d) in found.enumerated() where PlanStage.standsIn(for: s, detected: d) {
+                if (model.smoothness[safe: i] ?? 0) != 0 || (model.sharpness[safe: i] ?? 1) != 1 { wrong.append("stand-in edges not 0") }
+            }
             if !same(model.smoothness, edges.blur) || !same(model.sharpness, edges.sharpen) { wrong.append("edges") }
             if model.drawingStyle != s { wrong.append("style") }
             if !wrong.isEmpty { state.problems.append("after \(step): stale \(wrong.joined(separator: ", "))") }

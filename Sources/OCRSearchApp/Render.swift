@@ -88,7 +88,9 @@ struct RenderPlan: Sendable {
                                             weightBoosts: boosts, weights: weights, style: style, pixelSize: px,
                                             imageScale: pointScale)
         let edges = PlanStage.fitEdges(matches: matches, ink: ink, sizes: sizes, families: families,
-                                       weightBoosts: boosts, weights: weights, style: style, imageScale: pointScale)
+                                       weightBoosts: boosts, weights: weights,
+                                       standIns: detected.map { PlanStage.standsIn(for: style, detected: $0) },
+                                       style: style, imageScale: pointScale)
         return RenderPlan(pixelSize: px, imageScale: pointScale, matches: matches, bgColors: bg, ink: ink,
                           matchedFonts: families,
                           fontSizes: sizes, trackings: tracks, smoothness: edges.blur, sharpness: edges.sharpen,
@@ -248,8 +250,14 @@ enum PlanStage {
     /// drawn is Noto Sans standing in for a detected SF font, 1 otherwise. A family picked by hand
     /// is drawn as it is, Noto Sans included, and so is one detected in its own right.
     static func weightBoost(for style: OverlayStyle, detected: DetectedFont?) -> CGFloat {
-        guard style.manualFont.isEmpty, style.autoFont, detected?.standsInForSystemFont == true else { return 1 }
-        return systemFontReplacementWeightBoost
+        standsIn(for: style, detected: detected) ? systemFontReplacementWeightBoost : 1
+    }
+
+    /// Whether the family drawn is Noto Sans standing in for a detected SF font — the exceptional
+    /// case that is drawn 30% heavier and whose edges are left alone. Not a Noto Sans picked by
+    /// hand, and not one detected in its own right.
+    static func standsIn(for style: OverlayStyle, detected: DetectedFont?) -> Bool {
+        style.manualFont.isEmpty && style.autoFont && detected?.standsInForSystemFont == true
     }
 
     /// The family drawn: a picked one wins; otherwise the detected one, but only while matching
@@ -323,10 +331,14 @@ enum PlanStage {
     /// found by trying them — bisection against our drawing, blurred or sharpened, as measured: the
     /// system blur softens more than a Gaussian past about 0.3px, and with edges a pixel or so wide
     /// there is little ramp left to steepen (a factor of 1.5 narrows one by about 15%, not a third).
+    ///
+    /// Where Noto Sans stands in for SF (`standIns`), edges are left at 0 — neither blurred nor
+    /// sharpened — by decision, like its 30% boost.
     static func fitEdges(matches: [TextMatch], ink: [InkSample?], sizes: [CGFloat], families: [String?],
-                         weightBoosts: [CGFloat], weights: [MatchWeight], style: OverlayStyle,
+                         weightBoosts: [CGFloat], weights: [MatchWeight], standIns: [Bool], style: OverlayStyle,
                          imageScale: CGFloat) -> (blur: [CGFloat], sharpen: [CGFloat]) {
         let edges = matches.enumerated().map { i, m -> (CGFloat, CGFloat) in
+            if standIns[safe: i] == true { return (0, 1) }
             guard let measured = ink[safe: i] ?? nil, measured.isolated, measured.edgeRise > 0 else { return (0, 1) }
             let mw = weights[safe: i] ?? MatchWeight(weight: style.weight)
             let size = style.manualSize > 0 ? CGFloat(style.manualSize) * imageScale : (sizes[safe: i] ?? 12)
