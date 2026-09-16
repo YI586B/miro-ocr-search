@@ -3,22 +3,22 @@
 This branch holds the latest built disk image only. The source is on
 [`main`](https://github.com/YI586B/miro-ocr-search/tree/main).
 
-## Miro-ocr-search-1.4.dmg
+## Miro-ocr-search-1.3.dmg
 
 | | |
 |---|---|
-| Version | 1.4 |
-| Requires | macOS 13 Ventura or later, Apple Silicon |
+| Version | 1.3 (build 6) |
+| Requires | macOS 12 Monterey or later, Apple Silicon |
 | Size | 3.9M |
-| SHA-256 | `f68dc8e31c4d989ca4e839d664ccfbbebb0c4e01f0f1e9f4566f6d607753bfaa` |
+| SHA-256 | `1eb171d532e0b96b2714cf7e4812fb978c75d390858625797b0e5176df6b9b9f` |
 
-What's new since 1.3:
+What's new:
 
-- The softness of each redrawn word's edges is matched to the original, both ways: a slightly
-  blurred original gets a matching blur, a crisper one gets sharper edges. The style panel's
-  Smoothness setting is now Edges (above 0 softer, below 0 crisper).
-- Where the app draws Noto Sans in place of Apple's system font, edges are left as drawn.
-- With Boxes and Text both on, the box now sits behind the redrawn word, so the text stays on top.
+- Runs on macOS 12 Monterey as well as later versions.
+- On macOS 12 the hover card is not shown, because macOS 12 cannot report where the pointer is
+  over the image; ⌥⌘] and ⌥⌘[ still step through the matches with their card. The preview's
+  Phrase / Any Word choice is a small toolbar menu there.
+- On macOS 13 and later everything works as in the previous build.
 
 It is a search tool, not an image editor: it finds text in your images and shows where it is.
 Images it outputs carry a Miro watermark, because the app uses Miro's libraries.
@@ -37,7 +37,7 @@ developer cannot be verified or that the app is damaged. Neither means the downl
 
 Verify what you downloaded:
 
-    shasum -a 256 ~/Downloads/Miro-ocr-search-1.4.dmg
+    shasum -a 256 ~/Downloads/Miro-ocr-search-1.3.dmg
 
 Building from source avoids the quarantine entirely; see the
 [guide](https://github.com/YI586B/miro-ocr-search/blob/main/GUIDE.md).
