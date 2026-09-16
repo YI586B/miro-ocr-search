@@ -10,7 +10,7 @@ The `ocrsearch` CLI is separate and still uses the SQLite FTS5 index.
 - Sources/OCRSearchCore: OCR.swift (RecognizedPage = one Vision pass giving text, match boxes and all line boxes; imagePixelSize), Search.swift (searchTerms), Database.swift (SQLite FTS5 - CLI only; also SearchMode), Miro.swift (REST v2 client, exportToMiro), Config.swift (imageExts; indexFolder, dbPath - CLI only)
 - Sources/ocrsearch: CLI (index / search / export)
 - Sources/OCRSearchApp: assets (icon-1024.png, watermark.svg, fonts/) load through assetURL (Utilities.swift) — the app bundle's Resources (build-app.sh copies them), else Sources/assets via #filePath when run from the source tree.
-  - OCRSearchApp.swift (entry), Commands.swift (menu bar; preview actions via focusedSceneValue), Panels.swift, Utilities.swift
+  - OCRSearchApp.swift (entry: Launcher picks OCRSearchApp on macOS 13+, LegacyOCRSearchApp on 12), Compatibility.swift (macOS 12 stand-ins: preview opened via the miro-ocr-search:// link, represented URL, Phrase/Any Word menu, no hover card), Commands.swift (menu bar; preview actions via focusedSceneValue), Panels.swift, Utilities.swift
   - ContentView.swift + Model.swift (search window), MiroSheet.swift, PreviewView.swift (preview window + hover card) with PreviewModel.swift (its scan and fitting) and StyleInspector.swift (style panel), SettingsView.swift
   - OverlayStyle.swift (HL keys, OverlayStyle and its per-image storage), ImageSampling.swift (sampledInk / sampledBackgroundColors / imagePointScale), FontMatch.swift (font detection and fitting), Render.swift (RenderPlan; PlanStage = the find/sample/detect/fit steps shared by export and PreviewModel; drawOverlay, renderExportPNG), Watermark.swift
   - SelfTest.swift: `OCRSearchApp --selftest <images> <out>`; Scripts/golden-check.sh baseline|check <dir> compares plans and PNG hashes, and checks the preview path (PreviewModel, fresh and restyled field by field) exports the same bytes. Run before and after any change to detection, sampling, rendering or PreviewModel. ~6 min.
@@ -37,6 +37,7 @@ The `ocrsearch` CLI is separate and still uses the SQLite FTS5 index.
 - The preview window and the export draw the same bitmap (drawOverlay / overlayLayerImage); MatchView now only backs the Settings sample swatch.
 - Watermark size scales with the image diagonal (watermarkPixelSize(forImage:): diagonal x 63/2886.13028, height x 34/63, rounded; 63x34 at 1206x2622); margins fixed at 20px. Verified on all 21 miro-files images with Scripts/verify-watermark.swift.
 - Sources/assets/logo.png and watermark.jpeg are unused: logo.png is fully opaque (its "transparency" is a painted checkerboard), so the icon and the in-app badge come from watermark.svg instead.
+- Deployment target macOS 12 (Package.swift, Info.plist LSMinimumSystemVersion). Built and self-tested only on macOS 15 (identical to macOS 13 build); the macOS 12 path (link-opened preview, no hover) has not been run on a real macOS 12 Mac.
 - Written but NOT yet compiled/tested: Miro export (untested against real API; needs a Miro token).
 - Index DB (CLI only): ~/Library/Application Support/ocrsearch/index.db. Miro token is stored in the Keychain by the app, or MIRO_TOKEN for the CLI.
 

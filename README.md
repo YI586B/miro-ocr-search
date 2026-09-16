@@ -7,7 +7,7 @@ to a Miro board.
 It is a search tool, not an image editor: it finds text in your images and shows where it is.
 Images it outputs carry a Miro watermark, because the app uses Miro's libraries.
 
-**[Download a release](https://github.com/YI586B/miro-ocr-search/tree/release)** — macOS 13+,
+**[Download a release](https://github.com/YI586B/miro-ocr-search/tree/release)** — macOS 12+,
 Apple Silicon. The app is ad-hoc signed rather than notarised, so the first launch needs
 `xattr -dr com.apple.quarantine /Applications/Miro-ocr-search.app`; the guide explains why.
 

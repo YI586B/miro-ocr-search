@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "ocrsearch",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v12)],
     targets: [
         .target(name: "OCRSearchCore", path: "Sources/OCRSearchCore"),
         .executableTarget(name: "ocrsearch", dependencies: ["OCRSearchCore"], path: "Sources/ocrsearch"),
