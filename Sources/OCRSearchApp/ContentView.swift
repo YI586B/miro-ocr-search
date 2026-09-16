@@ -5,7 +5,6 @@ import OCRSearchCore
 
 struct ContentView: View {
     @StateObject private var m = Model()
-    @Environment(\.openWindow) private var openWindow
     @State private var showMiro = false
 
     var body: some View {
@@ -132,15 +131,16 @@ struct ContentView: View {
             }.padding(10)
         }
         .sheet(isPresented: $showMiro) { MiroSheet(m: m, isPresented: $showMiro) }
+        // macOS 13's way of opening a preview window, handed to PreviewOpening; see there.
+        .background { if #available(macOS 13, *) { OpenWindowBridge() } }
     }
 
     /// Opens the preview on `hit`, but hands it the whole current result list so its toolbar can
     /// page Previous/Next through the other results without coming back here.
     private func openPreview(_ hit: Hit) {
         let paths = m.results.map(\.path)
-        openWindow(id: "preview", value: PreviewRequest(path: hit.path, query: m.query, mode: m.searchMode,
-                                                        allPaths: paths,
-                                                        startIndex: paths.firstIndex(of: hit.path) ?? 0))
+        PreviewOpening.open(PreviewRequest(path: hit.path, query: m.query, mode: m.searchMode,
+                                           allPaths: paths, startIndex: paths.firstIndex(of: hit.path) ?? 0))
     }
 
     /// Shows an open panel modelessly, on the next turn of the run loop.

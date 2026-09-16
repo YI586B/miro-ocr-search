@@ -28,8 +28,9 @@ struct MatchView: View {
                     .overlay(Rectangle().stroke(box, lineWidth: outline ? 2 : 0))
             }
             if showText {
-                Text(text).font(.system(size: fontSize, weight: weight.font, design: design.font))
-                    .italic(italic)
+                // Text.italic(Bool) is macOS 13; the plain italic() is not.
+                let t = Text(text).font(.system(size: fontSize, weight: weight.font, design: design.font))
+                (italic ? t.italic() : t)
                     .foregroundStyle(textColor)
                     .lineLimit(1).minimumScaleFactor(0.9)   // safety net only; sizing above already fits
             }

@@ -13,7 +13,7 @@ Images it outputs carry a Miro watermark, because the app uses Miro's libraries.
 
 | | |
 |---|---|
-| macOS | 13 Ventura or later |
+| macOS | 12 Monterey or later |
 | Mac | Apple Silicon (M1 or newer) |
 | Disk | about 5 MB |
 
@@ -63,7 +63,7 @@ from source avoids it entirely, because a locally built app is never quarantined
 
 Each release commit records the disk image's SHA-256. To check yours matches:
 
-    shasum -a 256 ~/Downloads/Miro-ocr-search-1.4.dmg
+    shasum -a 256 ~/Downloads/Miro-ocr-search-1.3.dmg
 
 ---
 
@@ -160,6 +160,10 @@ With both on, the box is drawn behind the redrawn text, so the text stays on top
 Hover the glyphs of a match — the letters themselves, not a margin around them — and a card
 describes that one instance: which match it is, its size, the font, its colours and spacing.
 ⌥⌘] and ⌥⌘[ step through the matches from the keyboard and show the same card.
+
+On macOS 12 the card does not follow the pointer — macOS 12 cannot report where it is over the
+image — so use ⌥⌘] and ⌥⌘[ there. The preview's Phrase / Any Word choice is also a small menu in
+the toolbar on macOS 12 rather than sitting under the search field.
 
 ---
 

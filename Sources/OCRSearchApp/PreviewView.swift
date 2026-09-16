@@ -123,12 +123,9 @@ struct PreviewView: View {
                                                            height: target.height * geo.size.height)
                                                     .position(x: target.midX * geo.size.width,
                                                               y: (1 - target.midY) * geo.size.height)
-                                                    .onContinuousHover(coordinateSpace: .named("preview")) { phase in
-                                                        switch phase {
-                                                        case .active(let p): hoverIndex = i; hoverPoint = p; keyboardMatch = false
-                                                        case .ended: if hoverIndex == i { hoverIndex = nil }
-                                                        }
-                                                    }
+                                                    .matchHover(in: "preview",
+                                                                moved: { p in hoverIndex = i; hoverPoint = p; keyboardMatch = false },
+                                                                ended: { if hoverIndex == i { hoverIndex = nil } })
                                             }
                                             if let i = hoverIndex, preview.matches.indices.contains(i) {
                                                 let m = preview.matches[i]
@@ -220,7 +217,7 @@ struct PreviewView: View {
             }
         }
         // Standard title-bar document icon: Cmd-click it for the folder path, drag it to use the file.
-        .navigationDocument(URL(fileURLWithPath: path))
+        .documentProxy(URL(fileURLWithPath: path))
         .focusedSceneValue(\.preview, previewActions)
         // ⌘= as well as ⌘+ for Zoom In, as in most Mac apps; the menu item can only show one.
         .background(Button("", action: zoomIn).keyboardShortcut("=").opacity(0).allowsHitTesting(false))
@@ -284,10 +281,7 @@ struct PreviewView: View {
         // Top right, where Finder, Preview and Mail keep theirs. Phrase / Any Word show under it
         // while it is in use, as in the search window.
         .searchable(text: $query, placement: .toolbar, prompt: "Find on this image")
-        .searchScopes($searchMode) {
-            Text("Phrase").tag(SearchMode.phrase)
-            Text("Any Word").tag(SearchMode.words)
-        }
+        .searchModeChoice($searchMode)
         // As you type, once typing pauses: a search reuses the page already read, so it is quick,
         // but not so quick that every keystroke is worth one.
         .task(id: "\(query)|\(searchMode.rawValue)") {
