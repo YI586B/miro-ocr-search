@@ -1,8 +1,11 @@
 # Miro-ocr-search
 
-A macOS app that reads the text in a folder of images with Apple Vision, searches it, and can
-redraw a match on the image in a font matched to the original — then export the result to files or
-to a Miro board.
+**Search the text in your pictures, images and screenshots, locally on your Mac.**
+
+Miro-ocr-search is a Mac app that turns messy folders of documents, images, photos and screenshots into something you can search like a document. Using Apple's OCR technology and libraries from Miro, it lets you find any image by the text inside it.
+
+It reads the text with Apple Vision, can redraw a match on the image in a font matched to the
+original, and exports the result to files or to a Miro board.
 
 It is a search tool, not an image editor: it finds text in your images and shows where it is.
 Images it outputs carry a Miro watermark, because the app uses Miro's libraries.
