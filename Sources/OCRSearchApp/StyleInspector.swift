@@ -117,7 +117,7 @@ struct StyleInspector: View {
     }
 
     private var boxSection: some View {
-        let box = Binding<Color>(get: { Color(hex: style.boxHex) ?? .yellow }, set: { style.boxHex = $0.hexString })
+        let box = Binding<Color>(get: { Color(hex: style.boxHex) ?? .red }, set: { style.boxHex = $0.hexString })
         return VStack(alignment: .leading, spacing: 8) {
             row("Colour") {
                 ColorPicker("Box colour", selection: box, supportsOpacity: false).labelsHidden()

@@ -112,7 +112,9 @@ The same rule decides what gets highlighted on the image, so the list and the ov
 
 ## The preview window
 
-Double-click a result, or press **View**.
+Double-click a result, or press **View**. It opens 880 × 900 points, wide enough for every toolbar
+button to show even with a long file name as its title; after that macOS remembers the size you
+last left one at.
 
 | | |
 |---|---|
@@ -264,7 +266,19 @@ versions saved just by opening an image, which then stopped following the defaul
 then **Text Highlight** (Font, Weight, Colour, Background) and **Box Highlight** (Colour, Fill,
 Outline), each with its switch, and a sample of the result. Size, spacing and edges are measured
 on each image, so they are only in the style panel. **Reset to Original Defaults** puts the page back
-to how the app ships.
+to how the app ships:
+
+| setting | as shipped |
+|---|---|
+| Show Highlights, Text Highlight, Box Highlight | on |
+| Font | Auto (matched from the image) |
+| Size, Spacing, Edges | Auto (measured per match) |
+| Weight | Auto; italic off; kerning on |
+| Colour | Auto; black (#000000) where sampling fails |
+| Background | Auto (the original letters painted out); white (#FFFFFF) where sampling fails |
+| Box colour | red (#FF1400) |
+| Fill | 0% |
+| Outline | on |
 
 When a font was picked by hand for an image, the panel says so under Font and names what detection
 found, with **Use detected font** to switch back; when font matching is off, it says that, with

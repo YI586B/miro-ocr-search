@@ -21,7 +21,7 @@ enum HL {
     static let manualFont = "highlightManualFont"  // overrides the auto-detected family; "" = use it as detected
     static let manualSize = "highlightManualSize"  // fixed size for every match, in image pixels; 0 = auto-fit
     static let italic = "highlightItalic"          // draw matched words in italic
-    static let defaultBox = "#FFD60A"
+    static let defaultBox = "#FF1400"
     static let defaultText = "#000000"
     static let defaultBg = "#FFFFFF"
 
@@ -84,7 +84,7 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     /// than drawing every match in `weight` — screenshots mix weights, and a bold heading redrawn
     /// regular stands out. Only where the letters were isolated; elsewhere `weight` applies.
     var autoWeight = true
-    var autoFont = false
+    var autoFont = true
     var manualFont = ""
     /// Letter spacing, in points, applied on top of what the font does by itself. nil fits it to
     /// each match's measured width — see inkFittedTracking.

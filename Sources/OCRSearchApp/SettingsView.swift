@@ -67,7 +67,7 @@ struct SettingsView: View {
     private enum WeightChoice: Hashable { case auto, fixed(TextWeight) }
 
     var body: some View {
-        let box = Binding<Color>(get: { Color(hex: boxHex) ?? .yellow }, set: { boxHex = $0.hexString })
+        let box = Binding<Color>(get: { Color(hex: boxHex) ?? .red }, set: { boxHex = $0.hexString })
         let txt = Binding<Color>(get: { Color(hex: textHex) ?? .black }, set: { textHex = $0.hexString })
         let bg = Binding<Color>(get: { Color(hex: bgHex) ?? .white }, set: { bgHex = $0.hexString })
         return VStack(alignment: .leading, spacing: 14) {

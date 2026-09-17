@@ -70,7 +70,7 @@ struct LegacyPreviewWindow: View {
                 ProgressView()
             }
         }
-        .frame(minWidth: 400, idealWidth: 620, minHeight: 400, idealHeight: 900)
+        .frame(minWidth: 400, idealWidth: 880, minHeight: 400, idealHeight: 900)
         .onOpenURL { url in
             if request == nil { request = PreviewRequests.take(url) }
         }

@@ -78,7 +78,7 @@ struct PreviewView: View {
     @State private var style = OverlayStyle()
 
     var body: some View {
-        let box = Color(hex: style.boxHex) ?? .yellow
+        let box = Color(hex: style.boxHex) ?? .red
         let txt = Color(hex: style.textHex) ?? .black
         let bg = Color(hex: style.bgHex) ?? .white
         HStack(spacing: 0) {
