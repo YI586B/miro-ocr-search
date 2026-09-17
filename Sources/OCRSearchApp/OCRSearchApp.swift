@@ -41,10 +41,10 @@ struct OCRSearchApp: App {
         WindowGroup("Preview", id: "preview", for: PreviewRequest.self) { $req in
             if let req { PreviewView(allPaths: req.allPaths, startIndex: req.startIndex, query: req.query, searchMode: req.mode) }
         }
-        // Wide enough that every toolbar button shows, rather than some going into the » menu,
-        // even with several results (the "n of m" group) and a long file name as the title:
-        // measured at 807pt for an IMG_0000.PNG name and 870pt for a 60-character one.
-        .defaultSize(width: 880, height: 900)
+        // Wide enough that every toolbar button shows, rather than some going into the » menu, with
+        // several results (the "n of m" group) and a screenshot's name as the title: measured at
+        // 807pt for an IMG_0000.PNG name. A 60-character name needs 870pt, and loses a button or two.
+        .defaultSize(width: 830, height: 900)
         Settings { SettingsView() }
     }
 }

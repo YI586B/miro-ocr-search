@@ -115,9 +115,9 @@ The same rule decides what gets highlighted on the image, so the list and the ov
 
 ## The preview window
 
-Double-click a result, or press **View**. It opens 880 × 900 points, wide enough for every toolbar
-button to show even with a long file name as its title; after that macOS remembers the size you
-last left one at.
+Double-click a result, or press **View**. It opens 830 × 900 points, wide enough for every toolbar
+button to show with a screenshot's name as its title (a very long file name can push one into the
+» menu); after that macOS remembers the size you last left one at.
 
 | | |
 |---|---|
@@ -295,7 +295,8 @@ and kerning back to automatic) and **This Image to Defaults** (forget this image
 
 ## The watermark
 
-Every image the app outputs carries a Miro watermark, because the app uses Miro's libraries.
+Every image the app outputs with highlights carries a Miro watermark, because the app uses Miro's
+libraries. It also shows at a glance that the image has been changed from the original.
 
 It is a badge 20px in from the right and bottom, sized to the image: it scales with the image's diagonal,
 so it is 63×34 on a 1206×2622 iPhone image, 71×38 on a 1356×2948 one and 29×16 on a 1100×735
