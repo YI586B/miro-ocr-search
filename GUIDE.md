@@ -63,7 +63,7 @@ from source avoids it entirely, because a locally built app is never quarantined
 
 Each release commit records the disk image's SHA-256. To check yours matches:
 
-    shasum -a 256 ~/Downloads/Miro-ocr-search-1.3.dmg
+    shasum -a 256 ~/Downloads/Miro-ocr-search-1.3.2.dmg
 
 ---
 
@@ -150,7 +150,7 @@ Two separate switches, both on by default. They are in the preview toolbar's **O
 (click the button itself to hide or show the whole overlay; use its arrow for the switches) and in
 the **View** menu (**Show Boxes**, **Show Text**).
 
-- **Boxes** draws an outline around each match. Its fill starts at 0%; the style panel's **Fill opacity** adds a translucent fill.
+- **Boxes** draws an outline around each match. Its fill starts at 0%; the style panel's **Fill** adds a translucent fill.
 - **Text** covers each match with a patch matching the background and redraws the word on top.
 
 With both on, the box is drawn behind the redrawn text, so the text stays on top. Text is where the matching work happens.
@@ -192,12 +192,12 @@ From those:
 | what | how it is decided |
 |---|---|
 | **Font** | every candidate family is compared by letter shape against the whole page, not just the matched words: each line is drawn in the candidate over the glyphs measured off the image, and the closest wins. Each match is also checked against its own block — its line and the nearby lines of similar size — and a block set in a clearly different face (a condensed headline over body text) gets that face instead; a block only close to the page's answer keeps the page's, so a page in one face stays consistent. If nothing is close enough (a photo, a custom typeface) there is no match and the Font and Weight settings apply. If the winner is the system font (SF), Noto Sans is used instead; it ships with the app, and in that case only it is drawn 30% heavier (weight 400 → 520; bold 700 → 900, the font's maximum), since it reads lighter than SF. |
-| **Weight** | per match, matched to how much of its box the original's letters cover (a bold heading comes out bold, body text regular). A variable font is set to the exact measured weight; other fonts choose regular or bold. Noto Sans standing in for SF keeps its 30% boost and only chooses regular or bold. Turn off *Match weight from image*, or press **B**, to use one weight for every match. |
+| **Weight** | per match, matched to how much of its box the original's letters cover (a bold heading comes out bold, body text regular). A variable font is set to the exact measured weight; other fonts choose regular or bold. Noto Sans standing in for SF keeps its 30% boost and only chooses regular or bold. Choose **Regular** or **Bold** instead of **Auto** under Weight to use one weight for every match. |
 | **Size** | scaled so the string's glyph outlines match the measured ink height. |
 | **Spacing** | letter spacing set so the redrawn word spans the measured ink width. This is what stops a substitute font drifting across a word — on Verdana it is the difference between +8.7% too wide and −0.4%. |
 | **Edges** | each word's edges are measured on the original and on our own drawing of the same word, both to a fraction of a pixel. A softer original is matched with a slight blur; a crisper one by steepening our drawn edges (up to 1.6 times), which is searched for rather than computed, since at a pixel or so wide edges do not narrow in proportion. Differences under 0.05 px are left alone. Where Noto Sans stands in for SF, edges are left at 0 — neither blurred nor sharpened — like its 30% boost, a deliberate exception. |
 | **Covering the original** | only the original letters are taken out — their pixels, widened a little for soft edges, including parts that reach past Vision's box — and filled from the pixels around them, so a flat colour stays exact and a photo or gradient carries on through. Neighbouring text, such as a colon after the word, is left alone. Where the letters could not be isolated, or when you pick a Background colour, a flat patch is used instead. |
-| **Colours** | the sampled ink and background, with the pickers as fallbacks. |
+| **Colours** | the sampled ink and background; the chosen colours are used where sampling fails. |
 
 Change the font and size, spacing and edges are all refitted for it. That is the point: a
 different typeface needs different numbers to sit in the same space.
@@ -211,21 +211,33 @@ within 1px horizontally and vertically.
 ## Adjusting it
 
 **Style** in the preview toolbar (⌥⌘I) opens the style panel on the right of the window, so the
-image stays in view while you adjust it. It shows the Text settings when Text is on and the Box
-settings when Boxes is on.
+image stays in view while you adjust it. From the top:
+
+- **The image's name** and a badge: **Defaults** while it follows the defaults in Settings, **Own
+  look** once it has settings of its own (see below). **Reset** sits beside it.
+- **Text Highlight**, with a switch that draws it or not (the same setting as the Overlay menu's
+  Text): Font, Size, Weight (Auto, Regular or Bold, plus **I** for italic), Colour, Background,
+  Spacing, Edges and Kerning.
+- **Box Highlight**, with its own switch (the same as Overlay ▸ Boxes): Colour, Fill and Outline.
+- **Recalculate** and **Save as Default**.
+
+A highlight that is switched off stays in the panel, dimmed, so nothing moves around.
 
 Each automatic value can be switched off. Do that and the field becomes yours; switch it back on
 and the measured value returns:
 
-- *Match text colour from image* / *Match background from image*. While these are on, the colour
-  below each is only a fallback, used where sampling fails, and is labelled that way.
-- *Match font from image* — picking a font from the menu turns this off by itself, since choosing a
-  font is the opposite of matching one. Choosing **Auto** turns it back on.
-- *Match weight from image* — pressing **B** turns this off, since choosing a weight by hand is the
-  opposite of matching one.
-- **Auto** beside Size, Spacing and Edges. Typing a value turns it off. Edges above 0 is a blur in points; below 0 sharpens (-0.3 is 1.3 times steeper).
-
-**B** and **I** sit on the Size row; **Kerning** is below Edges.
+- **Font**: **Auto** matches it from the image and names what it found. Picking a family turns
+  matching off; choosing Auto again turns it back on.
+- **Weight**: **Auto** matches each match's weight; **Regular** or **Bold** uses that for every match.
+- **Colour** and **Background**: while **Auto** is on, the swatch shows what was picked up from
+  the image (the first match's; the hover card shows each match's own). Turn Auto off and the
+  swatch becomes a colour picker. The colour you chose is still used where sampling fails.
+  With Auto off, Background covers each match with a flat patch in that colour instead of painting
+  out just the letters.
+- **Auto** beside Size, Spacing and Edges. Typing a value, or moving the Edges slider, turns it off.
+  The Edges slider runs from **Crisper** to **Softer** with 0 in the middle; in the field, above 0 is
+  a blur in points and below 0 sharpens (-0.3 is 1.3 times steeper). While Auto is on these show
+  the first match's fitted value.
 
 **⌘R Recalculate** re-reads the image and works every automatic value out again, discarding the
 manual ones. Use it if an image changed on disk or a scan went wrong.
@@ -243,19 +255,24 @@ not restyle the rest. The three app-wide ones describe how you are looking at wh
 following each image would mean paging through results kept changing the view under you.
 
 An image has a look of its own only once you change something on it; until then it follows the
-defaults in Settings, and changing those reaches it. The panel's last line says which: "follows the
-defaults" or "has its own look". Changing a setting back to the default hands the image back to the
+defaults in Settings, and changing those reaches it. The badge at the top of the panel says which:
+**Defaults** or **Own look**. Changing a setting back to the default hands the image back to the
 defaults. **Settings ▸ Forget Every Image's Own Look** clears them all, including copies earlier
 versions saved just by opening an image, which then stopped following the defaults.
 
-When a font was picked by hand for an image, the Font section says so and names what detection
+**Settings** (⌘,) holds those defaults, laid out like the style panel: **Show Highlights**,
+then **Text Highlight** (Font, Weight, Colour, Background) and **Box Highlight** (Colour, Fill,
+Outline), each with its switch, and a sample of the result. Size, spacing and edges are measured
+on each image, so they are only in the style panel. **Reset to Original Defaults** puts the page back
+to how the app ships.
+
+When a font was picked by hand for an image, the panel says so under Font and names what detection
 found, with **Use detected font** to switch back; when font matching is off, it says that, with
 **Match font from image**. The hover card shows a picked font's detected alternative too.
 
-The panel ends with a **Reset** menu and **Save as Default** (make this look the starting point for
-images that have none). Reset offers **Font to Automatic** (font, size, spacing, edges, bold,
-italic and kerning back to automatic), **This Image to Defaults** (forget this image's settings)
-and **Recalculate Everything** (⌘R, above).
+**Reset**, at the top, offers **Font to Automatic** (font, size, spacing, edges, weight, italic
+and kerning back to automatic) and **This Image to Defaults** (forget this image's settings).
+**Save as Default**, at the bottom, makes this look the starting point for images that have none.
 
 ---
 

@@ -210,10 +210,10 @@ struct PreviewView: View {
                 Divider()
                 ScrollView {
                     StyleInspector(style: $style, preview: preview, path: path, overlayOn: overlayOn,
-                                   showBoxes: showBoxes, showText: showText, recalculate: refresh)
+                                   recalculate: refresh)
                         .padding(14)
                 }
-                    .frame(width: 320)
+                    .frame(width: 340)
             }
         }
         // Standard title-bar document icon: Cmd-click it for the folder path, drag it to use the file.
@@ -526,7 +526,7 @@ struct MatchInfoPopup: View {
                 if showText { Divider() }
                 row("Box size", "\(Int(boxSize.width.rounded()))×\(Int(boxSize.height.rounded())) px")
                 colorRow("Box color", boxColor)
-                row("Fill strength", "\(Int(opacity * 100))%")
+                row("Fill", "\(Int(opacity * 100))%")
             }
         }
         .padding(10)
