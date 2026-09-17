@@ -3,22 +3,24 @@
 This branch holds the latest built disk image only. The source is on
 [`main`](https://github.com/YI586B/miro-ocr-search/tree/main).
 
-## Miro-ocr-search-1.3.dmg
+## Miro-ocr-search-1.3.2.dmg
 
 | | |
 |---|---|
-| Version | 1.3 (build 6) |
+| Version | 1.3.2 (build 7) |
 | Requires | macOS 12 Monterey or later, Apple Silicon |
-| Size | 3.9M |
-| SHA-256 | `1eb171d532e0b96b2714cf7e4812fb978c75d390858625797b0e5176df6b9b9f` |
+| Size | 4.0M |
+| SHA-256 | `9dd0e4b98a1a5c727a96b16a51a660f1b9dd48ff418a53965807036f0af071cf` |
 
 What's new:
 
-- Runs on macOS 12 Monterey as well as later versions.
-- On macOS 12 the hover card is not shown, because macOS 12 cannot report where the pointer is
-  over the image; ⌥⌘] and ⌥⌘[ still step through the matches with their card. The preview's
-  Phrase / Any Word choice is a small toolbar menu there.
-- On macOS 13 and later everything works as in the previous build.
+- The style panel and Settings are laid out the same way, in two sections: **Text Highlight**
+  and **Box Highlight**, each with a switch to turn it on or off. A section that is off stays in
+  place, dimmed.
+- Every automatic setting, text colour and background included, has the same **Auto** button.
+- Weight is Auto, Regular or Bold; Edges is a slider from Crisper to Softer.
+- The top of the panel shows whether the image follows the defaults or has its own look.
+- Runs on macOS 12 Monterey as well as later versions (no hover card on macOS 12).
 
 It is a search tool, not an image editor: it finds text in your images and shows where it is.
 Images it outputs carry a Miro watermark, because the app uses Miro's libraries.
@@ -37,7 +39,7 @@ developer cannot be verified or that the app is damaged. Neither means the downl
 
 Verify what you downloaded:
 
-    shasum -a 256 ~/Downloads/Miro-ocr-search-1.3.dmg
+    shasum -a 256 ~/Downloads/Miro-ocr-search-1.3.2.dmg
 
 Building from source avoids the quarantine entirely; see the
 [guide](https://github.com/YI586B/miro-ocr-search/blob/main/GUIDE.md).
