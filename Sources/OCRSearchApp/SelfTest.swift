@@ -24,6 +24,7 @@ import OCRSearchCore
         guard weightBoostRuleHolds() else { exit(1) }
         guard ownLookRulesHold() else { exit(1) }
         guard edgeCalibrationHolds() else { exit(1) }
+        guard exportSizeHolds(images: URL(fileURLWithPath: a[i + 1])) else { exit(1) }
         run(images: URL(fileURLWithPath: a[i + 1]), out: URL(fileURLWithPath: a[i + 2]))
         exit(0)
     }
@@ -123,6 +124,60 @@ import OCRSearchCore
         for p in problems { print("FAILED own look: \(p)") }
         if problems.isEmpty { print("own look: kept only while it differs from the defaults") }
         return problems.isEmpty
+    }
+
+    /// Settings ▸ Export size: at 100% and at 112.44%, the export is that size, and its watermark
+    /// is the badge an image of the export's size gets (watermarkPixelSize, 20px margins). The
+    /// badge is found as the pixels that change when only the watermark is added.
+    static func exportSizeHolds(images: URL) -> Bool {
+        guard Watermark.isOn else { print("export size: skipped, the watermark is switched off"); return true }
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: images.path)) ?? []).sorted()
+        guard let name = names.first(where: { $0.hasPrefix("IMG_") && $0.hasSuffix(".PNG") }) else {
+            print("export size: skipped, no IMG_*.PNG"); return true
+        }
+        let path = images.appendingPathComponent(name).path
+        var marked = OverlayStyle(); marked.showBoxes = false; marked.showText = false
+        var plain = marked; plain.show = false
+        func pixels(_ png: Data?) -> (w: Int, h: Int, px: [UInt8])? {
+            guard let png, let cg = NSBitmapImageRep(data: png)?.cgImage else { return nil }
+            var px = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+            guard let ctx = CGContext(data: &px, width: cg.width, height: cg.height, bitsPerComponent: 8,
+                                      bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+            return (cg.width, cg.height, px)
+        }
+        var ok = true, report: [String] = []
+        for percent in [100.0, 112.44] {
+            let scale = CGFloat(percent / 100)
+            guard let a = pixels(renderExportPNG(path: path, query: "", searchMode: .phrase, style: marked, scale: scale)),
+                  let b = pixels(renderExportPNG(path: path, query: "", searchMode: .phrase, style: plain, scale: scale)),
+                  a.w == b.w, a.h == b.h else { print("FAILED export size: \(percent)% did not render"); return false }
+            guard let cg = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil)
+                    .flatMap({ CGImageSourceCreateImageAtIndex($0, 0, nil) }) else { return false }
+            let want = ExportSize.outputSize(width: cg.width, height: cg.height, scale: scale)
+            if (a.w, a.h) != want {
+                print("FAILED export size: \(percent)% is \(a.w)x\(a.h), expected \(want.width)x\(want.height)"); ok = false
+            }
+            // Bounding box of the pixels the watermark changed, in top-left coordinates.
+            var minX = a.w, minY = a.h, maxX = -1, maxY = -1
+            for y in 0..<a.h { for x in 0..<a.w {
+                let i = (y * a.w + x) * 4
+                if a.px[i] != b.px[i] || a.px[i + 1] != b.px[i + 1] || a.px[i + 2] != b.px[i + 2] {
+                    minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
+                }
+            } }
+            let badge = watermarkPixelSize(forImage: CGSize(width: a.w, height: a.h))
+            let got = (w: maxX - minX + 1, h: maxY - minY + 1, right: a.w - 1 - maxX, bottom: a.h - 1 - maxY)
+            if maxX < 0 || abs(got.w - Int(badge.width)) > 1 || abs(got.h - Int(badge.height)) > 1
+                || abs(got.right - Int(watermarkRightMargin)) > 1 || abs(got.bottom - Int(watermarkBottomMargin)) > 1 {
+                print("FAILED export size: \(percent)% badge \(got.w)x\(got.h) at \(got.right)/\(got.bottom)px, expected \(Int(badge.width))x\(Int(badge.height)) at 20/20")
+                ok = false
+            }
+            report.append("\(ExportSize.label(percent)) \(a.w)x\(a.h) badge \(got.w)x\(got.h)")
+        }
+        if ok { print("export size (\(name)): " + report.joined(separator: ", ")) }
+        return ok
     }
 
     /// How soft our own drawing is, measured as the originals are, across families and sizes —

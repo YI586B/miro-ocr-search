@@ -385,33 +385,49 @@ enum PlanStage {
 /// is re-laid-out at the font size that fits the match's box in real pixels, so every glyph is
 /// rasterised once, at final size. See `configureTextQuality` for the rest.
 ///
+/// `scale` (Settings ▸ Export, see ExportSize) makes the output larger or smaller than the image:
+/// the image is scaled smoothly, the overlay is drawn through the same scale so its text and boxes
+/// are rasterised at the final size, and the watermark is placed last at the output's own size.
+/// At 1 nothing changes.
+///
 /// PNG rather than the source's own format, always: the overlay is hard-edged text over flat
 /// colour, exactly the content JPEG's chroma subsampling and ringing artefacts destroy. A
 /// re-encoded JPEG would put a visible halo around every redrawn word.
 func renderExportPNG(path: String, query: String, searchMode: SearchMode,
-                     style: OverlayStyle, plan: RenderPlan? = nil) -> Data? {
+                     style: OverlayStyle, plan: RenderPlan? = nil, scale: CGFloat = 1) -> Data? {
     guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
           let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
     let w = image.width, h = image.height
     guard w > 0, h > 0 else { return nil }
     let plan = plan ?? RenderPlan.build(path: path, query: query, searchMode: searchMode, style: style)
 
-    guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+    let out = ExportSize.outputSize(width: w, height: h, scale: scale)
+
+    guard let ctx = CGContext(data: nil, width: out.width, height: out.height, bitsPerComponent: 8, bytesPerRow: 0,
                               space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
                               bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
     ctx.interpolationQuality = .high
+    // Image and overlay in the image's own coordinates, through the export scale.
+    ctx.saveGState()
+    if out.width != w || out.height != h {
+        ctx.scaleBy(x: CGFloat(out.width) / CGFloat(w), y: CGFloat(out.height) / CGFloat(h))
+    }
     ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
     configureTextQuality(ctx)
 
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
     drawOverlay(in: ctx, canvas: CGSize(width: w, height: h), plan: plan, style: style)
+    ctx.restoreGState()
     // Only when the overlay is on — with it off the export is the image as it is, and a watermark
-    // would be the one thing contradicting that — and only while the switch is on.
-    if style.show, Watermark.isOn { drawWatermark(ctx: ctx, width: CGFloat(w), height: CGFloat(h)) }
+    // would be the one thing contradicting that — and only while the switch is on. Sized and
+    // placed for the image being written, so a larger export gets the badge a larger image would.
+    if style.show, Watermark.isOn {
+        drawWatermark(ctx: ctx, width: CGFloat(out.width), height: CGFloat(out.height))
+    }
     NSGraphicsContext.restoreGraphicsState()
-    guard let out = ctx.makeImage() else { return nil }
-    return NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:])
+    guard let result = ctx.makeImage() else { return nil }
+    return NSBitmapImageRep(cgImage: result).representation(using: .png, properties: [:])
 }
 
 /// Draws every match's overlay — replacement text over a patch, a box, or both — onto `ctx`, whose canvas

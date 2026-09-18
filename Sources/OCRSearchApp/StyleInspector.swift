@@ -376,6 +376,16 @@ struct HighlightSection<Content: View>: View {
     }
 }
 
+/// A small all-caps heading, as the style panel and Settings head each group.
+struct SectionHeading: View {
+    let title: String
+    var body: some View {
+        Text(title.uppercased())
+            .font(.caption2).fontWeight(.semibold).kerning(0.5)
+            .foregroundStyle(.secondary)
+    }
+}
+
 /// A small all-caps heading with its on/off switch at the right.
 struct SwitchHeading: View {
     let title: String
@@ -385,9 +395,7 @@ struct SwitchHeading: View {
 
     var body: some View {
         HStack {
-            Text(title.uppercased())
-                .font(.caption2).fontWeight(.semibold).kerning(0.5)
-                .foregroundStyle(.secondary)
+            SectionHeading(title: title)
             Spacer()
             Toggle(title, isOn: $isOn).labelsHidden().toggleStyle(.switch).controlSize(.mini)
                 .disabled(!enabled).help(help)

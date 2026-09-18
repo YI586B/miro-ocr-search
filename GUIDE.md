@@ -282,6 +282,7 @@ to how the app ships:
 | Box colour | red (#FF1400) |
 | Fill | 0% |
 | Outline | on |
+| Export size | 112.4% |
 
 When a font was picked by hand for an image, the panel says so under Font and names what detection
 found, with **Use detected font** to switch back; when font matching is off, it says that, with
@@ -330,6 +331,19 @@ They are also rendered at the image's own resolution rather than captured from t
 text is re-laid-out at the size that fits in real pixels. Subpixel quantisation is off, subpixel
 positioning on, and LCD font smoothing off — that last one bakes colour fringing into a file that
 only looks right on the display it was tuned for.
+
+### Export size
+
+**Settings ▸ Export ▸ Size** makes exported images larger, for showing them on larger displays:
+112.4% (the default), 100% (the image's own size), 124.8%, 150.6% or Custom, any percentage from
+25% to 400%.
+It applies to every export — Export as PNG, Images to directory and Miro — whether highlights are
+on or not. The image itself is scaled smoothly, which cannot add detail it never had; the
+highlights are drawn at the new size, so their text and boxes stay sharp, and the watermark is the
+one an image of the new size gets. When it is not 100%, the save panel shows the output size
+(1206 × 2622 → 1356 × 2947 at 112.4%) and the Miro sheet says so; choose 100% to export at the
+image's own size. For crisper results on Retina and
+large screens, a Custom 200% is the step that helps.
 
 ---
 

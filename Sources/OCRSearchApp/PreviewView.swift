@@ -398,15 +398,20 @@ struct PreviewView: View {
         // was chosen rather than whatever the window has moved on to.
         let plan = preview.plan, st = preview.drawingStyle
         let (p, q, sm) = (path, preview.query, preview.searchMode)
+        let scale = ExportSize.scale()
         let panel = Panels.save
         panel.nameFieldStringValue = "\(name)-overlay.png"
         panel.allowedContentTypes = [.png]
-        panel.message = "Saved with the overlays and watermark as shown, at the image's full resolution."
+        let px = (width: Int(preview.pixelSize.width), height: Int(preview.pixelSize.height))
+        let out = ExportSize.outputSize(width: px.width, height: px.height, scale: scale)
+        panel.message = scale == 1
+            ? "Saved with the overlays and watermark as shown, at the image's full resolution."
+            : "Saved with the overlays and watermark as shown, at \(out.width) × \(out.height) (\(ExportSize.label(ExportSize.percent())) of \(px.width) × \(px.height); Settings ▸ Export)."
         // begin(), not runModal() -- see pick(dir:_:).
         DispatchQueue.main.async {
             panel.begin { response in
                 guard response == .OK, let url = panel.url,
-                      let data = renderExportPNG(path: p, query: q, searchMode: sm, style: st, plan: plan)
+                      let data = renderExportPNG(path: p, query: q, searchMode: sm, style: st, plan: plan, scale: scale)
                 else { return }
                 try? data.write(to: url)
             }
