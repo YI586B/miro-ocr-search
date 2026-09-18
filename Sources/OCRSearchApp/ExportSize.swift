@@ -6,8 +6,9 @@ import CoreGraphics
 /// directory, Miro) whether highlights are on or not; the save panels and the Miro sheet say
 /// when it is not 100%.
 ///
-/// The image's own pixels are scaled up smoothly; the redrawn text, boxes and watermark are drawn
-/// at the final size, so they stay sharp. See renderExportPNG.
+/// The image's own pixels are scaled up smoothly; the redrawn text and boxes are drawn at the final
+/// size, so they stay sharp. The watermark does not scale: it is the size it is on the original
+/// image, in the corner of the export. See renderExportPNG.
 enum ExportSize {
     static let key = "exportSizePercent"
     /// A little larger than the image, for larger displays: a 1206 × 2622 iPhone screenshot comes

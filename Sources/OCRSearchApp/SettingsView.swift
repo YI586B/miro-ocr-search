@@ -159,7 +159,7 @@ struct SettingsView: View {
                     Spacer()
                 }
             }
-            Text("Exported images are made this much larger, for larger displays: the image is scaled smoothly and the highlights and watermark are drawn at the new size. Applies to every export.")
+            Text("Exported images are made this much larger, for larger displays: the image is scaled smoothly and the highlights are drawn at the new size; the watermark stays the same size. Applies to every export.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .onAppear { customSize = !ExportSize.presets.contains(exportPercent) }

@@ -136,6 +136,12 @@ zoom, style panel, Recalculate) and **Go** (images and matches). The toolbar kee
 the left and zoom, **Overlay**, **Style** and **Export** on the right. The file icon in the title
 bar works as in any document window: ⌘-click it for the folder, or drag it.
 
+**Moving the image.** Click and drag the image to move it within its own frame. The frame keeps
+its size: what is pushed past an edge is cut off, and the space the image leaves is black. The
+highlights move with it; the watermark stays in the corner. The position is saved for that image
+and used by every export of it. The style panel says how far it has moved, and **Reset ▸ Position**
+puts it back.
+
 The search field at the top right holds what is being found on the image, starting with the search
 the window was opened from. Change it and the matches update as you type — the image is not read
 again, so it is quick. While the field is in use, **Phrase** and **Any Word** appear under it, as
@@ -251,7 +257,7 @@ manual ones. Use it if an image changed on disk or a scan went wrong.
 
 | per image | app-wide |
 |---|---|
-| font, size, spacing, edges, kerning, bold, italic, colours | overlay on/off |
+| font, size, spacing, edges, kerning, bold, italic, colours, position | overlay on/off |
 | | Boxes and Text |
 | | the watermark |
 
@@ -289,7 +295,8 @@ found, with **Use detected font** to switch back; when font matching is off, it 
 **Match font from image**. The hover card shows a picked font's detected alternative too.
 
 **Reset**, at the top, offers **Font to Automatic** (font, size, spacing, edges, weight, italic
-and kerning back to automatic) and **This Image to Defaults** (forget this image's settings).
+and kerning back to automatic), **Position** (put a moved image back) and **This Image to
+Defaults** (forget this image's settings, position included).
 **Save as Default**, at the bottom, makes this look the starting point for images that have none.
 
 ---
@@ -318,7 +325,8 @@ Tick the box on each result you want, then:
 - **Export to file ▸ CSV** — path, filename and full OCR text per image
 - **Export to file ▸ Markdown** — the same, as a readable document
 - **Export to file ▸ Images to directory…** — the images with their overlays and watermark
-  composited in, written as PNGs into a folder you choose
+  composited in, written as PNGs into a folder you choose. Each image is drawn with its own look
+  and position, as its preview shows it.
 - **Export … to Miro** — uploads the composited images to a board, each with its OCR snippet as a
   sticky note. Needs a token with `boards:read` and `boards:write`; it is kept in your Keychain.
 
@@ -339,8 +347,8 @@ only looks right on the display it was tuned for.
 25% to 400%.
 It applies to every export — Export as PNG, Images to directory and Miro — whether highlights are
 on or not. The image itself is scaled smoothly, which cannot add detail it never had; the
-highlights are drawn at the new size, so their text and boxes stay sharp, and the watermark is the
-one an image of the new size gets. When it is not 100%, the save panel shows the output size
+highlights are drawn at the new size, so their text and boxes stay sharp. The watermark does not
+scale: it is the size it is on the original image, 20px in from the export's right and bottom edges. When it is not 100%, the save panel shows the output size
 (1206 × 2622 → 1356 × 2947 at 112.4%) and the Miro sheet says so; choose 100% to export at the
 image's own size. For crisper results on Retina and
 large screens, a Custom 200% is the step that helps.

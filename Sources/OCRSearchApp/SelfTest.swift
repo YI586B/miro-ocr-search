@@ -25,6 +25,7 @@ import OCRSearchCore
         guard ownLookRulesHold() else { exit(1) }
         guard edgeCalibrationHolds() else { exit(1) }
         guard exportSizeHolds(images: URL(fileURLWithPath: a[i + 1])) else { exit(1) }
+        guard offsetHolds(images: URL(fileURLWithPath: a[i + 1])) else { exit(1) }
         run(images: URL(fileURLWithPath: a[i + 1]), out: URL(fileURLWithPath: a[i + 2]))
         exit(0)
     }
@@ -126,8 +127,42 @@ import OCRSearchCore
         return problems.isEmpty
     }
 
+    /// A moved image (OverlayStyle.offsetX/Y), exported with no highlights and so no watermark: every
+    /// pixel is the original's from (x - dx, y - dy), and where that falls outside the image it is
+    /// black. Moved 40px left and 12px down, the right 40 columns and top 12 rows are black.
+    static func offsetHolds(images: URL) -> Bool {
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: images.path)) ?? []).sorted()
+        guard let name = names.first(where: { $0.hasPrefix("IMG_") && $0.hasSuffix(".PNG") }) else { return true }
+        let path = images.appendingPathComponent(name).path
+        var plain = OverlayStyle(); plain.show = false
+        var moved = plain; moved.offsetX = -40; moved.offsetY = 12
+        func pixels(_ png: Data?) -> (w: Int, h: Int, px: [UInt8])? {
+            guard let png, let cg = NSBitmapImageRep(data: png)?.cgImage else { return nil }
+            var px = [UInt8](repeating: 0, count: cg.width * cg.height * 4)
+            guard let ctx = CGContext(data: &px, width: cg.width, height: cg.height, bitsPerComponent: 8,
+                                      bytesPerRow: cg.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+            return (cg.width, cg.height, px)
+        }
+        guard let a = pixels(renderExportPNG(path: path, query: "", searchMode: .phrase, style: plain)),
+              let b = pixels(renderExportPNG(path: path, query: "", searchMode: .phrase, style: moved)),
+              a.w == b.w, a.h == b.h else { print("FAILED offset: did not render"); return false }
+        var wrong = 0
+        for y in 0..<b.h { for x in 0..<b.w {
+            let sx = x + 40, sy = y - 12          // where this pixel came from
+            let i = (y * b.w + x) * 4
+            let want: [UInt8] = (sx < a.w && sy >= 0) ? Array(a.px[((sy * a.w + sx) * 4)..<((sy * a.w + sx) * 4 + 3)]) : [0, 0, 0]
+            if Array(b.px[i..<(i + 3)]) != want { wrong += 1 }
+        } }
+        if wrong > 0 { print("FAILED offset: \(wrong) pixels are not the original moved 40px left and 12px down"); return false }
+        print("offset (\(name)): moved 40px left and 12px down exactly, the space left black")
+        return true
+    }
+
     /// Settings ▸ Export size: at 100% and at 112.44%, the export is that size, and its watermark
-    /// is the badge an image of the export's size gets (watermarkPixelSize, 20px margins). The
+    /// is the original image's badge at every size (watermarkPixelSize of the image, not of the
+    /// export), 20px from the export's right and bottom edges. The
     /// badge is found as the pixels that change when only the watermark is added.
     static func exportSizeHolds(images: URL) -> Bool {
         guard Watermark.isOn else { print("export size: skipped, the watermark is switched off"); return true }
@@ -167,7 +202,7 @@ import OCRSearchCore
                     minX = min(minX, x); maxX = max(maxX, x); minY = min(minY, y); maxY = max(maxY, y)
                 }
             } }
-            let badge = watermarkPixelSize(forImage: CGSize(width: a.w, height: a.h))
+            let badge = watermarkPixelSize(forImage: CGSize(width: cg.width, height: cg.height))
             let got = (w: maxX - minX + 1, h: maxY - minY + 1, right: a.w - 1 - maxX, bottom: a.h - 1 - maxY)
             if maxX < 0 || abs(got.w - Int(badge.width)) > 1 || abs(got.h - Int(badge.height)) > 1
                 || abs(got.right - Int(watermarkRightMargin)) > 1 || abs(got.bottom - Int(watermarkBottomMargin)) > 1 {

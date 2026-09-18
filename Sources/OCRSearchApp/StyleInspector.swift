@@ -25,6 +25,10 @@ struct StyleInspector: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             scopeHeader
+            if style.isOffset {
+                Text(movedDescription + " The space it left is black, in exports too. Reset ▸ Position puts it back.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if !overlayOn {
                 Text("The overlay is off. Turn it on from the Overlay button to see these.")
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -71,14 +75,25 @@ struct StyleInspector: View {
             Menu("Reset") {
                 Button("Font to Automatic") { style.resetFontToAutomatic() }
                     .disabled(!style.fontIsOverridden)
+                Button("Position") { style.offsetX = 0; style.offsetY = 0 }
+                    .disabled(!style.isOffset)
                 Button("This Image to Defaults") {
                     OverlayStyle.clear(path)
                     style = OverlayStyle.current()
                 }
             }
             .menuStyle(.borderlessButton).fixedSize()
-            .help("Font to Automatic: auto font, size, spacing and edges, regular, no italic. This Image to Defaults: the look from Settings.")
+            .help("Font to Automatic: auto font, size, spacing and edges, regular, no italic. Position: put a moved image back. This Image to Defaults: the look from Settings and the image back in place.")
         }
+    }
+
+    /// "Moved 40 px left and 12 px down."
+    private var movedDescription: String {
+        func part(_ v: Double, _ neg: String, _ pos: String) -> String? {
+            v == 0 ? nil : "\(Int(abs(v))) px \(v < 0 ? neg : pos)"
+        }
+        let parts = [part(style.offsetX, "left", "right"), part(style.offsetY, "up", "down")].compactMap { $0 }
+        return "Moved " + parts.joined(separator: " and ") + "."
     }
 
     // MARK: sections

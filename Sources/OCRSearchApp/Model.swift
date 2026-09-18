@@ -179,7 +179,7 @@ final class Model: ObservableObject {
         busy = true; link = nil; exportError = nil; status = "Exporting \(plural(items.count, "item")) to Miro…"
         let (tok, id, name) = (token, boardID.trimmingCharacters(in: .whitespaces), boardName)
         let (q, sm) = (query, searchMode)
-        let style = OverlayStyle.current()
+        let styles = Dictionary(items.map { ($0.path, OverlayStyle.forImage($0.path)) }, uniquingKeysWith: { a, _ in a })
         let scale = ExportSize.scale()
         Task.detached {
             do {
@@ -187,7 +187,7 @@ final class Model: ObservableObject {
                 // found, so what goes up is the composited image — the same render the folder
                 // export writes — staged in a temp directory the upload reads from. Anything that
                 // fails to render still goes up as its original rather than being dropped.
-                let staged = renderForUpload(items, query: q, searchMode: sm, style: style, scale: scale)
+                let staged = renderForUpload(items, query: q, searchMode: sm, styles: styles, scale: scale)
                 let l = try exportToMiro(items: staged, token: tok, boardID: id.isEmpty ? nil : id,
                                          boardName: name, log: { _ in })
                 await MainActor.run { self.link = URL(string: l); self.status = "Exported \(plural(items.count, "item"))."; self.busy = false }
@@ -279,13 +279,15 @@ final class Model: ObservableObject {
         busy = true; status = "Rendering \(plural(hits.count, "image"))…"
         let jobs = hits.map(\.path)
         let (q, sm) = (query, searchMode)
-        let style = OverlayStyle.current()
+        // Each image's own look (and position), as its preview shows it; see OverlayStyle.forImage.
+        let styles = Dictionary(jobs.map { ($0, OverlayStyle.forImage($0)) }, uniquingKeysWith: { a, _ in a })
         let scale = ExportSize.scale()
         Task.detached(priority: .userInitiated) {
             var written = 0, failed = 0
             for (i, path) in jobs.enumerated() {
                 await MainActor.run { self.status = "Rendering \(i + 1) of \(jobs.count)…" }
-                guard let data = renderExportPNG(path: path, query: q, searchMode: sm, style: style, scale: scale) else {
+                guard let data = renderExportPNG(path: path, query: q, searchMode: sm, style: styles[path] ?? .defaults,
+                                                 scale: scale) else {
                     failed += 1; continue
                 }
                 // Always .png, whatever the source was; see renderExportPNG. The suffix keeps an
@@ -313,7 +315,7 @@ final class Model: ObservableObject {
 /// Writes into a per-export temp directory rather than alongside the originals — these are
 /// transport artefacts, not something the user asked to keep, and the OS reclaims them.
 private func renderForUpload(_ items: [(path: String, snippet: String)], query: String,
-                             searchMode: SearchMode, style: OverlayStyle,
+                             searchMode: SearchMode, styles: [String: OverlayStyle],
                              scale: CGFloat) -> [(path: String, snippet: String)] {
     let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent("ocrsearch-export-\(UUID().uuidString)")
@@ -322,8 +324,8 @@ private func renderForUpload(_ items: [(path: String, snippet: String)], query: 
     return items.map { item in
         let name = URL(fileURLWithPath: item.path).deletingPathExtension().lastPathComponent
         let dest = dir.appendingPathComponent("\(name).png")
-        guard let data = renderExportPNG(path: item.path, query: query, searchMode: searchMode, style: style,
-                                         scale: scale),
+        guard let data = renderExportPNG(path: item.path, query: query, searchMode: searchMode,
+                                         style: styles[item.path] ?? .defaults, scale: scale),
               (try? data.write(to: dest)) != nil else { return item }
         return (path: dest.path, snippet: item.snippet)
     }
