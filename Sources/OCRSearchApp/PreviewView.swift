@@ -51,6 +51,9 @@ struct PreviewView: View {
     /// The scan of the image on screen and everything its overlay is built from.
     @StateObject private var preview = PreviewModel()
     @State private var hoverIndex: Int?
+    /// Where the image is while it is being dragged, in image pixels; saved to style.offsetX/Y
+    /// when the drag ends, so the overlay is not rebuilt on every step.
+    @State private var dragOffset: CGSize?
     @State private var hoverPoint: CGPoint = .zero
     /// The style panel on the right of the window. A side panel rather than a popover so the
     /// image stays in view, and clickable, while the style is being adjusted.
@@ -94,14 +97,25 @@ struct PreviewView: View {
                                 : 1
                             let z = zoom ?? fit
                             let drawn = CGSize(width: max(preview.pixelSize.width * z, 1), height: max(preview.pixelSize.height * z, 1))
+                            // Where the image sits in its frame (see OverlayStyle.offsetX), in image pixels.
+                            let moved = dragOffset ?? CGSize(width: style.offsetX, height: style.offsetY)
                             ScrollView([.horizontal, .vertical]) {
+                                // Dragging moves the original inside its own frame; the space it
+                                // leaves is black, as in the export.
                                 Image(nsImage: image).resizable()
                                     .frame(width: drawn.width, height: drawn.height)
+                                    .offset(x: moved.width * z, y: moved.height * z)
+                                    .background(moved == .zero ? Color.clear : Color.black)
+                                    .clipped()
                                     .overlay(GeometryReader { geo in
                                         // Fitted sizes are cached at the image's native pixel scale (fontSizes);
                                         // this is the cheap per-frame conversion to on-screen points.
                                         let scale = preview.pixelSize.width > 0 ? geo.size.width / preview.pixelSize.width : 1
+                                        let shift = CGSize(width: moved.width * scale, height: moved.height * scale)
                                         ZStack(alignment: .topLeading) {
+                                          // The highlights and their hover targets move with the image;
+                                          // the hover card and the watermark do not.
+                                          ZStack(alignment: .topLeading) {
                                             if overlayOn, let overlayLayer = preview.overlayLayer {
                                                 Image(nsImage: overlayLayer).resizable()
                                                     .frame(width: geo.size.width, height: geo.size.height)
@@ -127,6 +141,11 @@ struct PreviewView: View {
                                                                 moved: { p in hoverIndex = i; hoverPoint = p; keyboardMatch = false },
                                                                 ended: { if hoverIndex == i { hoverIndex = nil } })
                                             }
+                                          }
+                                          .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                                          .coordinateSpace(name: "preview")
+                                          .offset(shift)
+                                          .clipped()
                                             if let i = hoverIndex, preview.matches.indices.contains(i) {
                                                 let m = preview.matches[i]
                                                 let target = hoverTarget(i)
@@ -146,8 +165,8 @@ struct PreviewView: View {
                                                                weightValue: preview.weights[safe: i]?.axis,
                                                                detectedFont: (preview.detections[safe: i] ?? nil)?.family)
                                                     .allowsHitTesting(false)   // never steals hover from the match it describes
-                                                    .position(x: min(cardAnchor(i, in: geo.size).x + 110, geo.size.width - 100),
-                                                              y: min(cardAnchor(i, in: geo.size).y + 70, geo.size.height - 60))
+                                                    .position(x: min(cardAnchor(i, in: geo.size).x + shift.width + 110, geo.size.width - 100),
+                                                              y: min(cardAnchor(i, in: geo.size).y + shift.height + 70, geo.size.height - 60))
                                             }
                                             // Follows the overlay toggle: turning the overlay off shows the
                                             // image as it is, and a watermark left behind would contradict
@@ -177,11 +196,19 @@ struct PreviewView: View {
                                                       y: geo.size.height - watermarkBottomMargin * scale - wh / 2)
                                             }
                                         }
-                                        .coordinateSpace(name: "preview")
                                         .onAppear { setDisplayScale(scale) }
                                         .onChange(of: geo.size) { _ in setDisplayScale(preview.pixelSize.width > 0 ? geo.size.width / preview.pixelSize.width : 1) }
                                         .onChange(of: preview.pixelSize) { _ in setDisplayScale(preview.pixelSize.width > 0 ? geo.size.width / preview.pixelSize.width : 1) }
                                     })
+                                    // Click and drag moves the image within its frame, in whole image
+                                    // pixels, and no further than its own size.
+                                    .gesture(DragGesture(minimumDistance: 3)
+                                        .onChanged { v in dragOffset = draggedOffset(v.translation, zoom: z) }
+                                        .onEnded { v in
+                                            let o = draggedOffset(v.translation, zoom: z)
+                                            style.offsetX = o.width; style.offsetY = o.height
+                                            dragOffset = nil
+                                        })
                                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                                     .padding(12)
                             }
@@ -336,6 +363,14 @@ struct PreviewView: View {
 
     /// Where the hover card for match `i` hangs from: the cursor, or the match's bottom-right
     /// corner when it was selected from the keyboard.
+    /// The saved offset plus a drag of `translation` points at `zoom` points per pixel, rounded to
+    /// whole pixels and kept within the image's own size.
+    private func draggedOffset(_ translation: CGSize, zoom: CGFloat) -> CGSize {
+        let z = max(zoom, 0.0001), w = preview.pixelSize.width, h = preview.pixelSize.height
+        let x = (style.offsetX + translation.width / z).rounded(), y = (style.offsetY + translation.height / z).rounded()
+        return CGSize(width: min(max(x, -w), w), height: min(max(y, -h), h))
+    }
+
     private func cardAnchor(_ i: Int, in size: CGSize) -> CGPoint {
         guard keyboardMatch else { return hoverPoint }
         let t = hoverTarget(i)
@@ -398,15 +433,20 @@ struct PreviewView: View {
         // was chosen rather than whatever the window has moved on to.
         let plan = preview.plan, st = preview.drawingStyle
         let (p, q, sm) = (path, preview.query, preview.searchMode)
+        let scale = ExportSize.scale()
         let panel = Panels.save
         panel.nameFieldStringValue = "\(name)-overlay.png"
         panel.allowedContentTypes = [.png]
-        panel.message = "Saved with the overlays and watermark as shown, at the image's full resolution."
+        let px = (width: Int(preview.pixelSize.width), height: Int(preview.pixelSize.height))
+        let out = ExportSize.outputSize(width: px.width, height: px.height, scale: scale)
+        panel.message = scale == 1
+            ? "Saved with the overlays and watermark as shown, at the image's full resolution."
+            : "Saved with the overlays and watermark as shown, at \(out.width) × \(out.height) (\(ExportSize.label(ExportSize.percent())) of \(px.width) × \(px.height); Settings ▸ Export)."
         // begin(), not runModal() -- see pick(dir:_:).
         DispatchQueue.main.async {
             panel.begin { response in
                 guard response == .OK, let url = panel.url,
-                      let data = renderExportPNG(path: p, query: q, searchMode: sm, style: st, plan: plan)
+                      let data = renderExportPNG(path: p, query: q, searchMode: sm, style: st, plan: plan, scale: scale)
                 else { return }
                 try? data.write(to: url)
             }

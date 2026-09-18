@@ -99,11 +99,20 @@ struct OverlayStyle: Sendable, Codable, Equatable {
     /// 0 = fit each match individually. See RenderPlan.imageScale.
     var manualSize: Double = 0
     var italic = false
+    /// Where the original image sits in its own frame, in image pixels (right and down are
+    /// positive): set by dragging it in the preview. The frame keeps its size; what is pushed past
+    /// the edge is cut off and the space it leaves is black. The highlights move with the image;
+    /// the watermark does not. Per image only — never part of the defaults.
+    var offsetX = 0.0
+    var offsetY = 0.0
+
+    var isOffset: Bool { offsetX != 0 || offsetY != 0 }
 
     /// Boxes and text are app-wide (see forImage), so they are left out of what an image saves.
     private enum CodingKeys: String, CodingKey {
         case show, boxHex, opacity, outline, textHex, autoTextColor, bgHex, autoBg, design, weight
         case autoWeight, autoFont, manualFont, manualTracking, kerning, manualSmoothness, manualSize, italic
+        case offsetX, offsetY
     }
 
     // MARK: per image
@@ -253,6 +262,7 @@ extension OverlayStyle {
         load(.autoBg, &autoBg); load(.design, &design); load(.weight, &weight); load(.autoWeight, &autoWeight)
         load(.autoFont, &autoFont); load(.manualFont, &manualFont); load(.kerning, &kerning)
         load(.manualSize, &manualSize); load(.italic, &italic)
+        load(.offsetX, &offsetX); load(.offsetY, &offsetY)
         if let v = try? c.decodeIfPresent(Double.self, forKey: .manualTracking) { manualTracking = v }
         if let v = try? c.decodeIfPresent(Double.self, forKey: .manualSmoothness) { manualSmoothness = v }
     }

@@ -44,6 +44,10 @@ struct MiroSheet: View {
 
             Text("\(plural(m.selection.count, "item")): images plus their OCR snippets as sticky notes.")
                 .font(.caption).foregroundStyle(.secondary)
+            if ExportSize.percent() != 100 {
+                Text("Images go up at \(ExportSize.label(ExportSize.percent())) of their size (Settings ▸ Export).")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
 
             if let err = m.exportError {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {

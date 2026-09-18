@@ -59,6 +59,9 @@ struct SettingsView: View {
     @AppStorage(HL.manualFont) private var manualFont = OverlayStyle.defaults.manualFont
     @AppStorage(HL.manualSize) private var manualSize = OverlayStyle.defaults.manualSize
     @AppStorage(HL.italic) private var italic = OverlayStyle.defaults.italic
+    @AppStorage(ExportSize.key) private var exportPercent = ExportSize.defaultPercent
+    /// Custom shown even while the typed percentage happens to equal a preset.
+    @State private var customSize = false
 
     /// The Font menu's choices: matching from the image, a family picked by hand (only while one
     /// is saved in the defaults, from a preview's Save as Default), or the system font in a design
@@ -111,15 +114,55 @@ struct SettingsView: View {
             }
             Divider()
             sample(box: box.wrappedValue, text: txt.wrappedValue, background: bg.wrappedValue)
+            Divider()
+            exportSection
             HStack {
                 Spacer()
-                Button("Reset to Original Defaults") { OverlayStyle.defaults.saveAsDefaults() }
-                    .help("Put every setting on this page back to how the app ships")
+                Button("Reset to Original Defaults") {
+                    OverlayStyle.defaults.saveAsDefaults()
+                    exportPercent = ExportSize.defaultPercent; customSize = false
+                }
+                .help("Put every setting on this page back to how the app ships")
             }
             Divider()
             ownLooks
         }
         .padding(20).frame(width: 420)
+    }
+
+    /// How large exported images are (see ExportSize): for larger displays. Applies to every
+    /// export, with or without highlights.
+    private var exportSection: some View {
+        let presetShown = !customSize && ExportSize.presets.contains(exportPercent)
+        return VStack(alignment: .leading, spacing: 8) {
+            SectionHeading(title: "Export")
+            StyleRow(label: "Size") {
+                Picker("Export size", selection: Binding<Double>(
+                    get: { presetShown ? exportPercent : -1 },
+                    set: { picked in
+                        if picked < 0 { customSize = true } else { customSize = false; exportPercent = picked }
+                    })) {
+                        ForEach(ExportSize.presets, id: \.self) { Text(ExportSize.label($0)).tag($0) }
+                        Text("Custom").tag(-1.0)
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+            }
+            if !presetShown {
+                StyleRow(label: "") {
+                    TextField("", value: Binding(get: { exportPercent },
+                                                 set: { exportPercent = min(max($0, ExportSize.range.lowerBound),
+                                                                            ExportSize.range.upperBound) }),
+                              format: .number.precision(.fractionLength(0...2)))
+                        .textFieldStyle(.roundedBorder).frame(width: 70)
+                        .multilineTextAlignment(.trailing)
+                    Text("% of each image's size").foregroundStyle(.secondary)
+                    Spacer()
+                }
+            }
+            Text("Exported images are made this much larger, for larger displays: the image is scaled smoothly and the highlights are drawn at the new size; the watermark stays the same size. Applies to every export.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .onAppear { customSize = !ExportSize.presets.contains(exportPercent) }
     }
 
     private var fontRow: some View {
