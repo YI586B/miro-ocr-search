@@ -1,6 +1,6 @@
 # miro-ocr-library
 
-User-facing docs: README.md (short) and GUIDE.md (comprehensive) — keep GUIDE.md current when behaviour changes.
+User-facing docs: README.md (short), GUIDE.md (comprehensive) and docs/index.html (non-technical one-page site, GitHub Pages from main /docs) — keep GUIDE.md and docs/index.html current when behaviour, version or download link changes.
 
 macOS Swift package: OCR images with Apple Vision, search their text, export to Miro / files.
 The app searches a folder you open directly — it reads every image in it once, keeps the text in memory, and has no index or database.

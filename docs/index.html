@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Miro-ocr-search</title>
+<meta name="description" content="A free Mac app that finds words inside your screenshots, highlights them, and sends the results to files or a Miro board.">
+<link rel="icon" type="image/png" href="icon.png">
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-soft: #f5f5f7;
+    --card: #ffffff;
+    --text: #1c1c1e;
+    --muted: #5f5f66;
+    --line: #e3e3e8;
+    --accent: #2f5bea;
+    --accent-text: #ffffff;
+    --note-bg: #fff8e6;
+    --note-line: #f0d48a;
+    --code-bg: #f0f0f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141416;
+      --bg-soft: #1c1c1f;
+      --card: #1f1f23;
+      --text: #f2f2f5;
+      --muted: #a4a4ad;
+      --line: #313137;
+      --accent: #7c9cff;
+      --accent-text: #0e1020;
+      --note-bg: #2a2413;
+      --note-line: #5c4b1c;
+      --code-bg: #26262b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141416; --bg-soft: #1c1c1f; --card: #1f1f23; --text: #f2f2f5; --muted: #a4a4ad;
+    --line: #313137; --accent: #7c9cff; --accent-text: #0e1020; --note-bg: #2a2413;
+    --note-line: #5c4b1c; --code-bg: #26262b;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 16px; }
+
+  /* Top bar */
+  nav.top {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  nav.top .wrap { display: flex; align-items: center; gap: 20px; height: 52px; overflow-x: auto; }
+  nav.top .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; color: var(--text); text-decoration: none; white-space: nowrap; }
+  nav.top .brand img { width: 24px; height: 24px; }
+  nav.top .links { display: flex; gap: 18px; margin-left: auto; }
+  nav.top .links a { color: var(--muted); text-decoration: none; font-size: 15px; white-space: nowrap; }
+  nav.top .links a:hover { color: var(--text); }
+
+  /* Hero */
+  header.hero { text-align: center; padding: 64px 0 48px; }
+  header.hero img { width: 144px; height: 144px; }
+  header.hero h1 { font-size: clamp(34px, 6vw, 48px); line-height: 1.1; margin: 12px 0 12px; letter-spacing: -0.02em; }
+  header.hero p.lead { font-size: 20px; color: var(--muted); max-width: 620px; margin: 0 auto 28px; }
+  .buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 12px 22px; border-radius: 10px; font-weight: 600;
+    text-decoration: none; border: 1px solid var(--line); color: var(--text); background: var(--card);
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .small { font-size: 14px; color: var(--muted); margin-top: 14px; }
+
+  /* Sections */
+  section { padding: 48px 0; border-top: 1px solid var(--line); scroll-margin-top: 56px; }
+  section.soft { background: var(--bg-soft); }
+  h2 { font-size: 30px; letter-spacing: -0.01em; margin: 0 0 8px; }
+  h3 { font-size: 19px; margin: 28px 0 8px; }
+  p.intro { color: var(--muted); margin: 0 0 24px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15.5px; }
+  .card .icon { font-size: 26px; line-height: 1; margin-bottom: 10px; }
+
+  ol.steps { list-style: none; padding: 0; margin: 0; counter-reset: step; }
+  ol.steps > li { position: relative; padding: 0 0 22px 52px; counter-increment: step; }
+  ol.steps > li::before {
+    content: counter(step); position: absolute; left: 0; top: 0;
+    width: 34px; height: 34px; border-radius: 50%;
+    background: var(--accent); color: var(--accent-text);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px;
+  }
+  ol.steps > li strong { display: block; }
+
+  .note {
+    background: var(--note-bg); border: 1px solid var(--note-line); border-radius: 12px;
+    padding: 16px 18px; margin: 20px 0;
+  }
+  .note p { margin: 6px 0; }
+  code, pre { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 5px; }
+  pre { background: var(--code-bg); padding: 12px 14px; border-radius: 10px; overflow-x: auto; margin: 10px 0; }
+  pre code { background: none; padding: 0; }
+  kbd {
+    font: 13px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 6px; background: var(--card);
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15.5px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin: 10px 0; }
+  details summary { cursor: pointer; padding: 14px 18px; font-weight: 600; list-style: none; position: relative; padding-right: 44px; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::after { content: "+"; position: absolute; right: 18px; top: 11px; font-size: 22px; color: var(--muted); }
+  details[open] summary::after { content: "–"; }
+  details .a { padding: 0 18px 14px; color: var(--muted); }
+  details .a p { margin: 0 0 8px; }
+
+  footer { padding: 36px 0 56px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; text-align: center; }
+  footer p { margin: 4px 0; }
+
+  @media (max-width: 640px) {
+    nav.top .links { gap: 14px; }
+    header.hero { padding: 44px 0 36px; }
+    header.hero img { width: 112px; height: 112px; }
+    section { padding: 40px 0; }
+  }
+</style>
+</head>
+<body>
+
+<nav class="top">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="icon.png" alt="">Miro-ocr-search</a>
+    <div class="links">
+      <a href="#what">What it is</a>
+      <a href="#install">Install</a>
+      <a href="#use">How to use</a>
+      <a href="#features">Features</a>
+      <a href="#help">Bugs</a>
+      <a href="#contribute">Contribute</a>
+      <a href="#faq">Q&amp;A</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <img src="icon.png" alt="Miro-ocr-search app icon">
+    <h1>Miro-ocr-search</h1>
+    <p class="lead">Find any word in a folder full of screenshots, see it highlighted on the image, and send what you found to a file or a Miro board.</p>
+    <div class="buttons">
+      <a class="btn primary" href="https://github.com/YI586B/miro-ocr-search/raw/release/Miro-ocr-search-1.0.dmg">Download for Mac</a>
+      <a class="btn" href="#install">Installation help</a>
+    </div>
+    <p class="small">Free · Version 1.0 · macOS 13 Ventura or later · Macs with Apple chips (M1 or newer)</p>
+  </div>
+</header>
+
+<section id="what" class="soft">
+  <div class="wrap">
+    <h2>What it is</h2>
+    <p class="intro">Screenshots hold a lot of useful text, but your Mac can't search inside them the way it searches a document. Miro-ocr-search fixes that.</p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="icon">📂</div>
+        <h3>Point it at a folder</h3>
+        <p>Pick any folder of screenshots or photos. The app reads the text in every image, including images in folders inside it.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔎</div>
+        <h3>Search like a document</h3>
+        <p>Type a word or phrase and you see every image that contains it straight away.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🖍️</div>
+        <h3>See it on the image</h3>
+        <p>Matches are marked on the picture itself. The app can also rewrite them in a font that matches the original.</p>
+      </div>
+      <div class="card">
+        <div class="icon">📤</div>
+        <h3>Share the results</h3>
+        <p>Save what you found as a spreadsheet, a document or finished images, or put it straight onto a Miro board.</p>
+      </div>
+    </div>
+
+    <h3>Who it's for</h3>
+    <p>Anyone who collects screenshots and has to find things in them later: researchers going through app screens, designers pulling examples together, support teams looking for a particular error message, or anyone preparing a Miro workshop from a pile of captures.</p>
+
+    <h3>Your images stay on your Mac</h3>
+    <p>The text is read by software built into macOS. You don't need an account or an internet connection, and your images are never uploaded anywhere. The only exception is when <em>you</em> choose to send results to Miro.</p>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2>How to install</h2>
+    <p class="intro">Installing takes about two minutes. The first time you open the app there's one extra step, explained below.</p>
+
+    <ol class="steps">
+      <li><strong>Download the app</strong>
+        Click <a href="https://github.com/YI586B/miro-ocr-search/raw/release/Miro-ocr-search-1.0.dmg">Download for Mac</a>. You'll get a file called <code>Miro-ocr-search-1.0.dmg</code> in your Downloads folder.</li>
+      <li><strong>Open the download</strong>
+        Double-click the file. A window opens showing the app and your Applications folder.</li>
+      <li><strong>Drag it into Applications</strong>
+        Drag the <em>Miro-ocr-search</em> icon onto the <em>Applications</em> folder in that window.</li>
+      <li><strong>Allow it to open (first time only)</strong>
+        macOS will block the first launch. This is expected. Follow the steps in the box below.</li>
+    </ol>
+
+    <div class="note">
+      <p><strong>“Cannot be opened because the developer cannot be verified” or “is damaged”</strong></p>
+      <p>The download isn't broken. Apple charges developers a yearly fee to register their apps, and this free app isn't registered, so macOS warns you. You only need to allow it once.</p>
+      <p><strong>Try this first:</strong> open your Applications folder, <em>right-click</em> (or Control-click) Miro-ocr-search, choose <strong>Open</strong>, then click <strong>Open</strong> again in the warning.</p>
+      <p><strong>If there's no Open button:</strong> open the <em>Terminal</em> app (search for it with <kbd>⌘</kbd> <kbd>Space</kbd>), paste this line, press <kbd>Return</kbd>, then open the app as usual:</p>
+      <pre><code>xattr -dr com.apple.quarantine /Applications/Miro-ocr-search.app</code></pre>
+    </div>
+
+    <h3>What you need</h3>
+    <table>
+      <tr><th>Mac</th><td>A Mac with an Apple chip (M1, M2, M3, M4 or newer). Not sure? Click the Apple menu  ▸ <em>About This Mac</em> and look for “Chip: Apple M…”.</td></tr>
+      <tr><th>macOS</th><td>13 Ventura or newer</td></tr>
+      <tr><th>Space</th><td>About 5 MB</td></tr>
+      <tr><th>Account</th><td>None. You only need a Miro account if you want to export to Miro.</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="use" class="soft">
+  <div class="wrap">
+    <h2>How to use it</h2>
+    <p class="intro">From opening the app to your first result.</p>
+
+    <ol class="steps">
+      <li><strong>Choose a folder</strong>
+        Click <em>Choose folder…</em> at the top of the window and pick the folder holding your screenshots.</li>
+      <li><strong>Wait while it reads</strong>
+        The app reads the text in every image. A couple of dozen screenshots take about ten seconds. This happens once each time you open a folder.</li>
+      <li><strong>Type what you're looking for</strong>
+        Results appear as you type. Choose <em>Phrase</em> to find the words together in that order, or <em>Any word</em> to find images that contain all the words anywhere.</li>
+      <li><strong>Look closer</strong>
+        Double-click a result to open it full size, with every match marked. Use <kbd>⌘</kbd><kbd>[</kbd> and <kbd>⌘</kbd><kbd>]</kbd> to move between results.</li>
+      <li><strong>Export what you need</strong>
+        Tick the results you want to keep and choose <em>Export to file</em> or <em>Export to Miro</em>.</li>
+    </ol>
+
+    <h3>Handy shortcuts in the preview window</h3>
+    <table>
+      <tr><td><kbd>⌘</kbd><kbd>[</kbd> / <kbd>⌘</kbd><kbd>]</kbd></td><td>Previous / next result</td></tr>
+      <tr><td><kbd>⌘</kbd><kbd>+</kbd> / <kbd>⌘</kbd><kbd>−</kbd></td><td>Zoom in / out</td></tr>
+      <tr><td><kbd>⌘</kbd><kbd>0</kbd> / <kbd>⌘</kbd><kbd>1</kbd></td><td>Fit to window / actual size</td></tr>
+      <tr><td><kbd>⌘</kbd><kbd>⇧</kbd><kbd>O</kbd></td><td>Show or hide the highlighting</td></tr>
+      <tr><td><kbd>⌘</kbd><kbd>S</kbd></td><td>Save this image as shown</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Close the preview</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2>Features</h2>
+    <p class="intro">What the app can do.</p>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Instant search</h3>
+        <p>Once a folder has been read, results show up as fast as you can type.</p>
+      </div>
+      <div class="card">
+        <h3>Two ways to highlight</h3>
+        <p><strong>Boxes</strong> puts a coloured box over each match. <strong>Text</strong> rewrites the match on the image, which is useful for mock-ups and presentations.</p>
+      </div>
+      <div class="card">
+        <h3>Matches the original look</h3>
+        <p>In Text mode the app works out the font, size, colours and spacing from the image, so the new text blends in.</p>
+      </div>
+      <div class="card">
+        <h3>Fine-tune any image</h3>
+        <p>The palette button lets you change the font, size, colours or spacing yourself. Changes apply only to that image.</p>
+      </div>
+      <div class="card">
+        <h3>Export to files</h3>
+        <p>Save results as a spreadsheet (CSV), a readable document (Markdown), or full-quality images with the highlighting built in.</p>
+      </div>
+      <div class="card">
+        <h3>Export to Miro</h3>
+        <p>Send the chosen images to a new or existing Miro board, each with a sticky note of its text.</p>
+      </div>
+      <div class="card">
+        <h3>English and Dutch</h3>
+        <p>Text in English and Dutch is recognised. Common formats work: PNG, JPEG, HEIC, TIFF, GIF, BMP and WebP.</p>
+      </div>
+      <div class="card">
+        <h3>Private by design</h3>
+        <p>Everything happens on your Mac. Your original images are never changed. Exports are always saved as new files.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="help" class="soft">
+  <div class="wrap">
+    <h2>Report a bug or ask for a feature</h2>
+    <p class="intro">Found something that doesn't work, or have an idea? We'd like to hear about it.</p>
+
+    <ol class="steps">
+      <li><strong>Open the issue page</strong>
+        Go to <a href="https://github.com/YI586B/miro-ocr-search/issues">Issues on GitHub</a> and check whether someone has already reported it. If they have, add your details there.</li>
+      <li><strong>Create a new issue</strong>
+        Click <a href="https://github.com/YI586B/miro-ocr-search/issues/new">New issue</a>. You'll need a free GitHub account.</li>
+      <li><strong>Tell us what happened</strong>
+        Include:
+        <ul>
+          <li>what you were trying to do</li>
+          <li>what you expected, and what happened instead</li>
+          <li>your macOS version and Mac model (Apple menu  ▸ <em>About This Mac</em>)</li>
+          <li>a screenshot of the problem, if you can</li>
+        </ul>
+      </li>
+    </ol>
+
+    <div class="note">
+      <p><strong>Take care with screenshots.</strong> Issues are public. Don't attach images that show private or confidential information.</p>
+    </div>
+  </div>
+</section>
+
+<section id="contribute">
+  <div class="wrap">
+    <h2>Become a contributor</h2>
+    <p class="intro">You don't have to be a programmer to help.</p>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Without writing code</h3>
+        <p>Report bugs, suggest features, point out anything confusing in this guide, or tell other people about the app.</p>
+      </div>
+      <div class="card">
+        <h3>With code</h3>
+        <p>The app is written in Swift. Fix a bug, add a feature, or improve the docs, and send a pull request.</p>
+      </div>
+    </div>
+
+    <h3>Contributing code, step by step</h3>
+    <ol class="steps">
+      <li><strong>Start with an issue</strong>
+        Before starting on something big, open an issue and say what you'd like to change, so nobody duplicates work.</li>
+      <li><strong>Fork and build</strong>
+        Fork the <a href="https://github.com/YI586B/miro-ocr-search">repository</a>, then build it on your Mac. You'll need Apple's free command line tools (<code>xcode-select --install</code>):
+        <pre><code>git clone https://github.com/&lt;your-name&gt;/miro-ocr-search.git
+cd miro-ocr-search
+./build-app.sh
+open "Miro-ocr-search.app"</code></pre>
+      </li>
+      <li><strong>Make your change on a branch</strong>
+        Keep each change focused on one thing. If you change how the app behaves, update the <a href="https://github.com/YI586B/miro-ocr-search/blob/main/GUIDE.md">full guide</a> as well.</li>
+      <li><strong>Open a pull request</strong>
+        Push your branch and open a pull request that says what you changed and how you tested it.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="faq" class="soft">
+  <div class="wrap">
+    <h2>Questions &amp; answers</h2>
+    <p class="intro">The questions people ask most.</p>
+
+    <details>
+      <summary>Is it free?</summary>
+      <div class="a"><p>Yes. There's no price, subscription or account.</p></div>
+    </details>
+
+    <details>
+      <summary>Is this an official Miro product?</summary>
+      <div class="a"><p>No. It's an independent project that can send results to Miro. It isn't made, endorsed or supported by Miro.</p></div>
+    </details>
+
+    <details>
+      <summary>Why does macOS say the app is “damaged” or from an “unverified developer”?</summary>
+      <div class="a"><p>Apple charges developers a yearly fee to register their apps, and this free app isn't registered. The download is fine. Follow the <a href="#install">first-launch steps</a> once and the warning won't come back.</p></div>
+    </details>
+
+    <details>
+      <summary>Are my screenshots uploaded anywhere?</summary>
+      <div class="a"><p>No. Text is read on your Mac by software built into macOS. Nothing leaves your computer unless you choose <em>Export to Miro</em>, and then only the images you ticked are sent, to your own board.</p></div>
+    </details>
+
+    <details>
+      <summary>Will it change or delete my original images?</summary>
+      <div class="a"><p>No. The app only reads your images. Anything you export or save is written as a new file.</p></div>
+    </details>
+
+    <details>
+      <summary>Does it work on Windows, or on an older Intel Mac?</summary>
+      <div class="a"><p>Not on Windows, because it relies on text recognition built into macOS. The download runs on Macs with Apple chips. On an Intel Mac, someone comfortable with the Terminal can build it from the source code instead (see <a href="#contribute">Contributing code</a>).</p></div>
+    </details>
+
+    <details>
+      <summary>Why does it take a few seconds every time I open a folder?</summary>
+      <div class="a"><p>The app reads your images fresh each time rather than keeping a separate copy of their text, so results always match what's in the folder right now. Reading is the slow part. Searching afterwards is instant. If you add images while the app is open, use <em>Reload</em> in the folder menu.</p></div>
+    </details>
+
+    <details>
+      <summary>It isn't finding a word I can see in the image. Why?</summary>
+      <div class="a"><p>Very small, blurry, stylised or handwritten text can be hard to read. Only English and Dutch are recognised. Try a shorter part of the word, or switch between <em>Phrase</em> and <em>Any word</em>.</p></div>
+    </details>
+
+    <details>
+      <summary>How do I connect my Miro board?</summary>
+      <div class="a"><p>When you choose <em>Export to Miro</em>, a window asks for a Miro access token. Its <em>Where do I get one?</em> link takes you to the page in your Miro settings where you create one. Give it permission to read and write boards. Then choose to create a new board or add to an existing one. The app keeps the token in your Mac's Keychain, the same secure place your passwords are stored, so you only enter it once. Miro export is new, so please <a href="#help">report</a> anything that goes wrong.</p></div>
+    </details>
+
+    <details>
+      <summary>What's the small badge in the corner of exported images?</summary>
+      <div class="a"><p>A watermark added to images that have highlighting turned on. If you turn the highlighting off, you get the plain image without it.</p></div>
+    </details>
+
+    <details>
+      <summary>I changed the style of an image and now it's gone. What happened?</summary>
+      <div class="a"><p>Style settings are remembered by where the file is. If you move or rename an image, the app treats it as a new image and starts from the default look.</p></div>
+    </details>
+
+    <details>
+      <summary>How do I remove the app?</summary>
+      <div class="a"><p>Drag <em>Miro-ocr-search</em> from your Applications folder to the Bin. Your images aren't affected.</p></div>
+    </details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p><a href="https://github.com/YI586B/miro-ocr-search">Source code on GitHub</a> · <a href="https://github.com/YI586B/miro-ocr-search/blob/main/GUIDE.md">Full technical guide</a> · <a href="https://github.com/YI586B/miro-ocr-search/issues">Report a problem</a></p>
+    <p>Miro-ocr-search is an independent project and is not affiliated with or endorsed by Miro. Miro is a trademark of its owner.</p>
+  </div>
+</footer>
+
+</body>
+</html>

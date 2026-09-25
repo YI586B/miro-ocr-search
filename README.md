@@ -15,6 +15,9 @@ Or build it:
 
 Either way: choose a folder, wait while it reads the images, and search.
 
+**[User guide (website) →](https://yi586b.github.io/miro-ocr-search/)** — a one-page, non-technical
+introduction: what it is, installing, using it, reporting bugs, contributing, Q&A.
+
 **[Full guide →](GUIDE.md)** — searching, the preview window, how the overlay is matched to the
 image, per-image settings, the watermark, exporting, and the command line.
 
@@ -27,6 +30,7 @@ image, per-image settings, the watermark, exporting, and the command line.
 | `Sources/ocrsearch` | the command line tool, which keeps its own index |
 | `Sources/assets` | logo, icon, watermark, bundled Noto Sans |
 | `Scripts` | icon generation, watermark verification |
+| `docs` | the user guide website, served by GitHub Pages from `main` /docs |
 | `make-release.sh` | builds the installable disk image into `dist/` |
 
 Test screenshots live in a local `miro-files/` folder, which is not tracked — point the app at any
