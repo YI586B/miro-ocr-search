@@ -4,6 +4,9 @@ A macOS app that reads the text in a folder of images, lets you search it, and c
 match on the image in a font matched to the original — then export the result to files or to a
 Miro board.
 
+It is a search tool, not an image editor: it finds text in your images and shows where it is.
+Images it outputs carry a Miro watermark, because the app uses Miro's libraries.
+
 ---
 
 ## Requirements
@@ -231,7 +234,9 @@ and **Recalculate Everything** (⌘R, above).
 
 ## The watermark
 
-A badge 20px in from the right and bottom, sized to the image: it scales with the image's diagonal,
+Every image the app outputs carries a Miro watermark, because the app uses Miro's libraries.
+
+It is a badge 20px in from the right and bottom, sized to the image: it scales with the image's diagonal,
 so it is 63×34 on a 1206×2622 iPhone image, 71×38 on a 1356×2948 one and 29×16 on a 1100×735
 photo (width = diagonal × 63 / 2886.13028, height = width × 34 / 63, both rounded). **View ▸ Watermark** switches it off, and asks
 for a password to do so. It shows only when the overlay is on as well — with the overlay off you
